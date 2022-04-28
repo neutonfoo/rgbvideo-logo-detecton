@@ -95,6 +95,7 @@ class RGBVideo:
         )
 
         # Need to move RGB channel to last axis
+        # Shape = (9000, 270, 480, 3)
         self.frames_buffer = np.moveaxis(self.frames_buffer, 1, 3)
 
         print(
@@ -195,7 +196,6 @@ class RGBVideo:
 
         buffer = BytesIO()
         for frame_index in range(0, self.number_of_frames, frame_skip):
-            # print(f"Checking frame {frame_index}")
             img = Image.fromarray(self.frames_buffer[frame_index])
             img.save(buffer, format="PNG")
 
@@ -204,6 +204,7 @@ class RGBVideo:
             logos = response.logo_annotations
 
             for logo in logos:
+                print(f"{logo.description} detected on frame {frame_index}")
                 detected_logos.add(logo.description)
 
             buffer.seek(0)
@@ -213,10 +214,8 @@ class RGBVideo:
 
     def __frame_to_time_conversion(self, frame_index, round_time: bool = False):
         t = frame_index / self.frame_rate
-
         if round_time:
             return round(t, 2)
-
         return t
 
     def __frame_to_audio_conversation(self, frame_index):
@@ -230,24 +229,26 @@ def main():
         audio_file_name="dataset-001/dataset/Videos/data_test1.wav",
     )
 
+    # Ads - 20s
+
     # rgb_video.dump_frames()
     # rgb_video.scan_for_shots()
 
-    rgb_video.debug_override_shots(
-        [
-            (0, 1178),
-            (1179, 2399),
-            (2400, 2849),
-            (2850, 4349),
-            (4350, 5549),
-            (5550, 5924),
-            (5925, 5986),
-            (5987, 5999),
-            (6000, 8999),
-        ]
-    )
-    rgb_video.calculate_audio_averages()
+    # rgb_video.debug_override_shots(
+    #     [
+    #         (0, 1178),
+    #         (1179, 2399),
+    #         (2400, 2849),
+    #         (2850, 4349),
+    #         (4350, 5549),
+    #         (5550, 5924),
+    #         (5925, 5986),
+    #         (5987, 5999),
+    #         (6000, 8999),
+    #     ]
+    # )
 
+    # rgb_video.calculate_audio_averages()
     # rgb_video.scan_for_logos()
 
 
