@@ -7,6 +7,7 @@ import numpy as np
 from dotenv import load_dotenv
 from google.cloud import vision
 from PIL import Image
+from scipy.io import wavfile
 
 load_dotenv()
 
@@ -54,34 +55,72 @@ class FrameUtil:
 
 
 class RGBVideo:
-    def __init__(self, file_name: str, width=480, height=270, channels=3):
-        self.file_name = file_name
+    def __init__(
+        self,
+        video_file_name: str,
+        audio_file_name: str,
+        width=480,
+        height=270,
+        channels=3,
+        frame_rate=30,
+    ):
+        self.video_file_name = video_file_name
+        self.audio_file_name = audio_file_name
         self.width = width
         self.height = height
         self.channels = channels
+        self.frame_rate = frame_rate
 
-        self.frames_buffer = np.fromfile(file_name, dtype=np.uint8)
+        print(f"Processing '{self.video_file_name}' and '{self.audio_file_name}'.")
+
+        self.__read_video_file()
+        self.__read_audio_file()
+
+    def __read_video_file(self):
+        self.frames_buffer = np.fromfile(self.video_file_name, dtype=np.uint8)
 
         # Calculate number of frames by dividing number of values by size of 1 frame
         self.number_of_frames = int(
             self.frames_buffer.shape[0] / (self.width * self.height * self.channels)
         )
 
+        self.duration = self.number_of_frames / self.frame_rate
+
         # Initialize shots as the whole video
         self.shots: List[Tuple[int, int]] = [(0, self.number_of_frames - 1)]
 
         # Shape = (9000, 3, 270, 480)
         self.frames_buffer = self.frames_buffer.reshape(
-            (self.number_of_frames, self.channels, self.height, self.width), order="c"
+            (self.number_of_frames, self.channels, self.height, self.width)
         )
-        # print(self.frames_buffer.flags)
 
         # Need to move RGB channel to last axis
         self.frames_buffer = np.moveaxis(self.frames_buffer, 1, 3)
 
         print(
-            f"Loaded '{self.file_name}' - {self.number_of_frames} frames loaded into buffer"
+            f"'{self.video_file_name}' loaded. {self.number_of_frames} frames loaded into buffer."
         )
+
+    def __read_audio_file(self):
+        self.audio_sample_rate, self.audio_data = wavfile.read(self.audio_file_name)
+        expected_number_of_samples = int(self.audio_sample_rate * self.duration)
+
+        # 0 pad on the right side if not enough samples
+        if self.audio_data.shape[0] < expected_number_of_samples:
+
+            print(
+                f"'{self.audio_file_name}' data missing {expected_number_of_samples - self.audio_data.shape[0]} samples. Applying zero-padding on right side."
+            )
+
+            self.audio_data = np.pad(
+                self.audio_data,
+                (0, expected_number_of_samples - self.audio_data.shape[0]),
+                "constant",
+                constant_values=(0, 0),
+            )
+
+    def debug_override_shots(self, shots: List[Tuple[int, int]]):
+        self.shots = shots
 
     def dump_frames(self, output_folder="video_frames") -> None:
         print(f"Dumping frames into '{output_folder}' folder")
@@ -127,42 +166,12 @@ class RGBVideo:
 
         print(self.shots)
 
-    def debug_override_shots(self, shots):
-        self.shots = shots
-
-    def scan_shots_for_logos(self, frame_skip=5):
-        img = Image.fromarray(self.frames_buffer[2137])
-
-        # img_base64 = base64.b64encode(data.tobytes())
-
-        buffer = BytesIO()
-        img.save(buffer, format="PNG")
-
-        image = vision.Image(content=buffer.getvalue())
-        response = client.logo_detection(image=image)
-        logos = response.logo_annotations
-        print("Logos:")
-
-        for logo in logos:
-            print(logo.description)
-
-        if response.error.message:
-            raise Exception(
-                "{}\nFor more info on error messages, check: "
-                "https://cloud.google.com/apis/design/errors".format(
-                    response.error.message
-                )
-            )
-
-        img.close()
-
-    def scan_shots_for_logos(self, frame_skip=100):
-
+    def scan_for_logos(self, frame_skip=100):
         detected_logos: Set[str] = set()
 
         buffer = BytesIO()
         for frame_index in range(0, self.number_of_frames, frame_skip):
-            print(f"Checking frame {frame_index}")
+            # print(f"Checking frame {frame_index}")
             img = Image.fromarray(self.frames_buffer[frame_index])
             img.save(buffer, format="PNG")
 
@@ -178,55 +187,30 @@ class RGBVideo:
 
         print(detected_logos)
 
-        # for shot_index, shot in enumerate(self.shots):
-        #     shot_start_frame_index = shot[0]
-        #     shot_end_frame_index = shot[1]
-        #     for frame_index in range(
-        #         shot_start_frame_index, shot_end_frame_index, frame_skip
-        #     ):
-        #         print(f"Checking frame {frame_index}")
-        #         img = Image.fromarray(self.frames_buffer[frame_index])
-        #         buffer = BytesIO()
-        #         img.save(buffer, format="PNG")
-        #         img.save(f"test{frame_index}.png", format="PNG")
-        #         buffer.flush()
-        #         image = vision.Image(content=buffer.getvalue())
-        #         response = client.logo_detection(image=image)
-        #         logos = response.logo_annotations
-
-        #         if len(logos) > 0:
-        #             if "subway" not in logos:
-        #                 print(f"Shot {shot_index} has logos but Subway not in it")
-        #                 print(logos)
-        #                 break
-        #             else:
-        #                 print(f"Shot {shot_index} has Subway in it")
-        #                 print(logos)
-        #                 break
-
-        # print(enco)
-        # exit(0)
-
 
 def main():
-    pass
-    rgb_video = RGBVideo("dataset-001/dataset/Videos/data_test1.rgb")
-    # # rgb_video.dump_frames()
-    # rgb_video.scan_for_shots()
-    rgb_video.debug_override_shots(
-        [
-            (0, 1178),
-            (1179, 2399),
-            (2400, 2849),
-            (2850, 4349),
-            (4350, 5549),
-            (5550, 5924),
-            (5925, 5986),
-            (5987, 5999),
-            (6000, 8999),
-        ]
+    rgb_video = RGBVideo(
+        video_file_name="dataset-001/dataset/Videos/data_test1.rgb",
+        audio_file_name="dataset-001/dataset/Videos/data_test1.wav",
     )
-    rgb_video.scan_shots_for_logos()
+
+    # rgb_video.dump_frames()
+    # rgb_video.scan_for_shots()
+
+    # rgb_video.debug_override_shots(
+    #     [
+    #         (0, 1178),
+    #         (1179, 2399),
+    #         (2400, 2849),
+    #         (2850, 4349),
+    #         (4350, 5549),
+    #         (5550, 5924),
+    #         (5925, 5986),
+    #         (5987, 5999),
+    #         (6000, 8999),
+    #     ]
+    # )
+    # rgb_video.scan_for_logos()
 
 
 if __name__ == "__main__":
