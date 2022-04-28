@@ -103,10 +103,14 @@ class RGBVideo:
         )
 
     def __read_audio_file(self):
-        self.audio_sample_rate, self.audio_data = wavfile.read(self.audio_file_name)
+        self.audio_sample_rate, self.audio_data = wavfile.read(
+            self.audio_file_name, True
+        )
+
         expected_number_of_samples = int(self.audio_sample_rate * self.duration)
 
-        # 0 pad on the right side if not enough samples
+        # We know the expected number of samples from the video data,
+        # if the .wav file is missing samples, just pad on the right with 0s
         if self.audio_data.shape[0] < expected_number_of_samples:
 
             print(
@@ -119,6 +123,21 @@ class RGBVideo:
                 "constant",
                 constant_values=(0, 0),
             )
+
+        self.audio_data = self.audio_data.astype("float32")
+
+        ## Normalize the values to be between [0,1]
+        # This gets rid of negative values
+
+        # Got overflow errors, need to convert to int32
+        self.normalized_audio_data = self.audio_data.astype("int32")
+        audio_min = np.min(self.normalized_audio_data)
+        audio_max = np.max(self.normalized_audio_data)
+
+        # # Normalize audio data
+        self.normalized_audio_data = (self.normalized_audio_data - audio_min) / (
+            audio_max - audio_min
+        )
 
     def debug_override_shots(self, shots: List[Tuple[int, int]]) -> None:
         self.shots = shots
@@ -174,22 +193,31 @@ class RGBVideo:
                 f"Shot from {self.__frame_to_time_conversion(shot_frame_start_index, True)}s to {self.__frame_to_time_conversion(shot_frame_end_index, True)}s"
             )
 
-    def calculate_audio_averages(self):
+    def calculate_shot_audio_amplitudes(self):
+
+        prev_shot_audio_normalized = 0
+
         for shot in self.shots:
             shot_frame_start_index = shot[0]
             shot_frame_end_index = shot[1]
 
-            averge_frequecy = 0
+            # Make it so that the array sums = 1, so it can be applied to BD
+            shot_audio_normalized = self.normalized_audio_data[
+                shot_frame_start_index : shot_frame_end_index + 1
+            ]
+            shot_audio_normalized /= np.sum(shot_audio_normalized)
 
-            for frame_index in range(shot_frame_start_index, shot_frame_end_index + 1):
-                wav_index = self.__frame_to_audio_conversation(frame_index)
-                averge_frequecy += self.audio_data[wav_index]
+            # averge_frequecy = 0
 
-            averge_frequecy /= shot_frame_end_index - shot_frame_start_index
+            # for frame_index in range(shot_frame_start_index, shot_frame_end_index + 1):
+            #     wav_index = self.__frame_to_audio_conversation(frame_index)
+            #     averge_frequecy += self.audio_data[wav_index]
 
-            print(
-                f"{averge_frequecy} from {self.__frame_to_time_conversion(shot_frame_start_index, True)}s to {self.__frame_to_time_conversion(shot_frame_end_index, True)}s"
-            )
+            # averge_frequecy /= shot_frame_end_index - shot_frame_start_index
+
+            # print(
+            #     f"{averge_frequecy} from {self.__frame_to_time_conversion(shot_frame_start_index, True)}s to {self.__frame_to_time_conversion(shot_frame_end_index, True)}s"
+            # )
 
     def scan_for_logos(self, frame_skip=100):
         detected_logos: Set[str] = set()
@@ -223,6 +251,11 @@ class RGBVideo:
         return int(t * self.audio_sample_rate)
 
 
+class Shot:
+    def __init__(self):
+        pass
+
+
 def main():
     rgb_video = RGBVideo(
         video_file_name="dataset-001/dataset/Videos/data_test1.rgb",
@@ -234,21 +267,21 @@ def main():
     # rgb_video.dump_frames()
     # rgb_video.scan_for_shots()
 
-    # rgb_video.debug_override_shots(
-    #     [
-    #         (0, 1178),
-    #         (1179, 2399),
-    #         (2400, 2849),
-    #         (2850, 4349),
-    #         (4350, 5549),
-    #         (5550, 5924),
-    #         (5925, 5986),
-    #         (5987, 5999),
-    #         (6000, 8999),
-    #     ]
-    # )
+    rgb_video.debug_override_shots(
+        [
+            (0, 1178),
+            (1179, 2399),
+            (2400, 2849),
+            (2850, 4349),
+            (4350, 5549),
+            (5550, 5924),
+            (5925, 5986),
+            (5987, 5999),
+            (6000, 8999),
+        ]
+    )
 
-    # rgb_video.calculate_audio_averages()
+    rgb_video.calculate_shot_audio_amplitudes()
     # rgb_video.scan_for_logos()
 
 
