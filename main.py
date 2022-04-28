@@ -15,10 +15,10 @@ client = vision.ImageAnnotatorClient.from_service_account_json(
     os.environ["GOOGLE_VISION_CREDS_JSON"]
 )
 
-# Shot change at 1178 ->1179
+
 class FrameUtil:
     @staticmethod
-    def compare_histogram(
+    def compare_histograms(
         frame1: np.ndarray,
         frame2: np.ndarray,
         compare_method: int = cv.HISTCMP_BHATTACHARYYA,
@@ -109,7 +109,7 @@ class RGBVideo:
         if self.audio_data.shape[0] < expected_number_of_samples:
 
             print(
-                f"'{self.audio_file_name}' data missing {expected_number_of_samples - self.audio_data.shape[0]} samples. Applying zero-padding on right side."
+                f"'{self.audio_file_name}' missing {expected_number_of_samples - self.audio_data.shape[0]} samples. Applying zero-padding on right side."
             )
 
             self.audio_data = np.pad(
@@ -119,7 +119,7 @@ class RGBVideo:
                 constant_values=(0, 0),
             )
 
-    def debug_override_shots(self, shots: List[Tuple[int, int]]):
+    def debug_override_shots(self, shots: List[Tuple[int, int]]) -> None:
         self.shots = shots
 
     def dump_frames(self, output_folder="video_frames") -> None:
@@ -152,7 +152,7 @@ class RGBVideo:
             current_frame: np.ndarray = self.frames_buffer[frame_index]
             next_frame: np.ndarray = self.frames_buffer[frame_index + 1]
 
-            compare_val = FrameUtil.compare_histogram(
+            compare_val = FrameUtil.compare_histograms(
                 current_frame, next_frame, compare_method
             )
 
@@ -164,7 +164,31 @@ class RGBVideo:
 
         self.shots.append((shot_start_frame_index, len(self.frames_buffer) - 1))
 
-        print(self.shots)
+        # Timestamp shots
+        for shot in self.shots:
+            shot_frame_start_index = shot[0]
+            shot_frame_end_index = shot[1]
+
+            print(
+                f"Shot from {self.__frame_to_time_conversion(shot_frame_start_index, True)}s to {self.__frame_to_time_conversion(shot_frame_end_index, True)}s"
+            )
+
+    def calculate_audio_averages(self):
+        for shot in self.shots:
+            shot_frame_start_index = shot[0]
+            shot_frame_end_index = shot[1]
+
+            averge_frequecy = 0
+
+            for frame_index in range(shot_frame_start_index, shot_frame_end_index + 1):
+                wav_index = self.__frame_to_audio_conversation(frame_index)
+                averge_frequecy += self.audio_data[wav_index]
+
+            averge_frequecy /= shot_frame_end_index - shot_frame_start_index
+
+            print(
+                f"{averge_frequecy} from {self.__frame_to_time_conversion(shot_frame_start_index, True)}s to {self.__frame_to_time_conversion(shot_frame_end_index, True)}s"
+            )
 
     def scan_for_logos(self, frame_skip=100):
         detected_logos: Set[str] = set()
@@ -187,6 +211,18 @@ class RGBVideo:
 
         print(detected_logos)
 
+    def __frame_to_time_conversion(self, frame_index, round_time: bool = False):
+        t = frame_index / self.frame_rate
+
+        if round_time:
+            return round(t, 2)
+
+        return t
+
+    def __frame_to_audio_conversation(self, frame_index):
+        t = self.__frame_to_time_conversion(frame_index)
+        return int(t * self.audio_sample_rate)
+
 
 def main():
     rgb_video = RGBVideo(
@@ -197,19 +233,21 @@ def main():
     # rgb_video.dump_frames()
     # rgb_video.scan_for_shots()
 
-    # rgb_video.debug_override_shots(
-    #     [
-    #         (0, 1178),
-    #         (1179, 2399),
-    #         (2400, 2849),
-    #         (2850, 4349),
-    #         (4350, 5549),
-    #         (5550, 5924),
-    #         (5925, 5986),
-    #         (5987, 5999),
-    #         (6000, 8999),
-    #     ]
-    # )
+    rgb_video.debug_override_shots(
+        [
+            (0, 1178),
+            (1179, 2399),
+            (2400, 2849),
+            (2850, 4349),
+            (4350, 5549),
+            (5550, 5924),
+            (5925, 5986),
+            (5987, 5999),
+            (6000, 8999),
+        ]
+    )
+    rgb_video.calculate_audio_averages()
+
     # rgb_video.scan_for_logos()
 
 
