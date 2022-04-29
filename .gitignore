@@ -1,6 +1,11 @@
 creds
 video_frames
+video_frames_2
+video_frames_3
 dataset-001
+
+new.rgb
+new.wav
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
