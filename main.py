@@ -63,27 +63,15 @@ class Shot:
     def __init__(
         self,
         start_frame_index: int,
-        end_frame_index: int,
         frames_buffer: np.ndarray,
         start_audio_index: int,
-        end_audio_index: int,
         audio_buffer: np.ndarray,
     ):
         self.start_frame_index = start_frame_index
-        self.end_frame_index = end_frame_index
         self.frames_buffer = frames_buffer
 
-        assert self.end_frame_index - self.start_frame_index + 1 == len(
-            self.frames_buffer
-        )
-
         self.start_audio_index = start_audio_index
-        self.end_audio_index = end_audio_index
         self.audio_buffer = audio_buffer
-
-        assert self.end_audio_index - self.start_audio_index + 1 == len(
-            self.audio_buffer
-        )
 
         self.compute_average_absolute_amplitude()
 
@@ -141,8 +129,8 @@ class Shot:
 
     def __repr__(self):
         return (
-            f"V: {self.start_frame_index} -> {self.end_frame_index} ({self.end_frame_index - self.start_frame_index + 1}) / (L{len(self.frames_buffer)})\n"
-            f"A: {self.start_audio_index} -> {self.end_audio_index} ({self.end_audio_index - self.start_audio_index + 1}) / (L{len(self.audio_buffer)})"
+            f"V: {self.start_frame_index} -> {self.start_frame_index + len(self.frames_buffer) - 1}\n"
+            f"A: {self.start_audio_index} -> {self.start_audio_index + len(self.audio_buffer) - 1})"
         )
 
 
@@ -155,6 +143,7 @@ class RGBVideo:
         height=270,
         channels=3,
         frame_rate=30,
+        ad_name: str = "",
     ):
         self.video_file_name = video_file_name
         self.audio_file_name = audio_file_name
@@ -162,12 +151,12 @@ class RGBVideo:
         self.height = height
         self.channels = channels
         self.frame_rate = frame_rate
+        self.ad_name = ad_name
+        self.ads_to_splice: List[RGBVideo] = []
 
         self.shots: List[Shot] = []
 
-        print(
-            f" -- Processing '{self.video_file_name}' and '{self.audio_file_name}' -- "
-        )
+        print(f"-- Processing '{self.video_file_name}' and '{self.audio_file_name}'")
 
         self.__read_video_file()
         self.__read_audio_file()
@@ -239,10 +228,8 @@ class RGBVideo:
         self.shots.append(
             Shot(
                 start_frame_index=0,
-                end_frame_index=self.number_of_frames - 1,
                 frames_buffer=self.frames_buffer,
                 start_audio_index=0,
-                end_audio_index=self.number_of_audio_samples - 1,
                 audio_buffer=self.audio_buffer,
             )
         )
@@ -255,7 +242,7 @@ class RGBVideo:
             im.save(f"{output_folder}/{frame_index}.png")
 
             if frame_index % 100 == 0:
-                print(f"--- At frame {frame_index} of {self.frames_buffer.shape[0]}")
+                print(f"-- At frame {frame_index} of {self.frames_buffer.shape[0]}")
 
         print("Frame dump completed")
 
@@ -265,7 +252,7 @@ class RGBVideo:
         compare_threshold: float = 0.7,
     ) -> None:
         print(
-            f" -- Detecting shots with '{RGB_Util.get_histogram_comparison_method_name(compare_method)}' with threshold {compare_threshold} -- "
+            f"-- Detecting shots with '{RGB_Util.get_histogram_comparison_method_name(compare_method)}' with threshold {compare_threshold}"
         )
 
         # Clear current shots array
@@ -289,12 +276,10 @@ class RGBVideo:
                 self.shots.append(
                     Shot(
                         start_frame_index=start_frame_index,
-                        end_frame_index=frame_index,
                         frames_buffer=self.frames_buffer[
                             start_frame_index : frame_index + 1
                         ],
                         start_audio_index=start_audio_index,
-                        end_audio_index=end_audio_index,
                         audio_buffer=self.audio_buffer[
                             start_audio_index : end_audio_index + 1
                         ],
@@ -311,12 +296,10 @@ class RGBVideo:
         self.shots.append(
             Shot(
                 start_frame_index=start_frame_index,
-                end_frame_index=len(self.frames_buffer) - 1,
                 frames_buffer=self.frames_buffer[
                     start_frame_index : len(self.frames_buffer)
                 ],
                 start_audio_index=start_audio_index,
-                end_audio_index=end_audio_index,
                 audio_buffer=self.audio_buffer[start_audio_index : end_audio_index + 1],
             )
         )
@@ -324,7 +307,7 @@ class RGBVideo:
         # Timestamp shots
         for shot in self.shots:
             shot_frame_start_index = shot.start_frame_index
-            shot_frame_end_index = shot.end_frame_index
+            shot_frame_end_index = shot_frame_start_index + len(shot.frames_buffer) - 1
 
             print(
                 f"Shot from frames {shot_frame_start_index} to {shot_frame_end_index}"
@@ -333,7 +316,7 @@ class RGBVideo:
         self.verify_shots_continuity()
 
     def verify_shots_continuity(self):
-        print(" -- Verifying shots continuity -- ")
+        print("-- Verifying shots continuity")
 
         prev_shot_end_frame_index = -1
         prev_shot_end_audio_index = -1
@@ -344,43 +327,49 @@ class RGBVideo:
             if shot.start_frame_index != prev_shot_end_frame_index + 1:
                 has_shots_continuity_error = True
                 print(
-                    f"Video discontinuity from shot {shot_index - 1} to {shot_index} : {shot.start_frame_index} -> {prev_shot_end_frame_index}"
+                    f"Video discontinuity from shot {shot_index - 1} to {shot_index} : {prev_shot_end_frame_index} -> {shot.start_frame_index}"
                 )
 
             if shot.start_audio_index != prev_shot_end_audio_index + 1:
                 has_shots_continuity_error = True
                 print(
-                    f"Audio discontinuity from shot {shot_index - 1} to {shot_index} : {shot.start_audio_index} -> {prev_shot_end_audio_index}"
+                    f"Audio discontinuity from shot {shot_index - 1} to {shot_index} : {prev_shot_end_audio_index} -> {shot.start_audio_index}"
                 )
 
-            prev_shot_end_frame_index = shot.end_frame_index
-            prev_shot_end_audio_index = shot.end_audio_index
+            prev_shot_end_frame_index = (
+                shot.start_frame_index + len(shot.frames_buffer) - 1
+            )
+            prev_shot_end_audio_index = (
+                shot.start_audio_index + len(shot.audio_buffer) - 1
+            )
 
-        if not has_shots_continuity_error:
-            print(" -- Shots continuity verified -- ")
+        if has_shots_continuity_error:
+            print("-- Shots continuity error")
+            exit(1)
+
+        else:
+            print("-- Shots continuity verified")
 
     def _debug_set_shots(self, shots: List[Tuple[int, int]]):
 
-        print(" -- Manually overriding shot detection -- ")
-        print(" -- For debug use only -- ")
+        print("-- Manually overriding shot detection")
+        print("-- For debug use only")
 
         self.shots.clear()
         for shot in shots:
             start_frame_index = shot[0]
-            frame_index = shot[1]
+            end_frame_index = shot[1]
 
             start_audio_index = self.__frame_to_audio_conversation(start_frame_index)[0]
-            end_audio_index = self.__frame_to_audio_conversation(frame_index)[1]
+            end_audio_index = self.__frame_to_audio_conversation(end_frame_index)[1]
 
             self.shots.append(
                 Shot(
                     start_frame_index=start_frame_index,
-                    end_frame_index=frame_index,
                     frames_buffer=self.frames_buffer[
-                        start_frame_index : frame_index + 1
+                        start_frame_index : end_frame_index + 1
                     ],
                     start_audio_index=start_audio_index,
-                    end_audio_index=end_audio_index,
                     audio_buffer=self.audio_buffer[
                         start_audio_index : end_audio_index + 1
                     ],
@@ -390,14 +379,16 @@ class RGBVideo:
         # Timestamp shots
         for shot in self.shots:
             shot_frame_start_index = shot.start_frame_index
-            shot_frame_end_index = shot.end_frame_index
+            shot_frame_end_index = shot_frame_start_index + len(shot.frames_buffer) - 1
 
             print(
                 f"Shot from frames {shot_frame_start_index} to {shot_frame_end_index}"
             )
 
     def merge_shots_using_audio_hueristic(
-        self, advertisement_length_tolerance: int = 20
+        self,
+        advertisement_length_tolerance: int = 20,
+        advertisement_amplitude_delta_tolerance: int = 300,
     ):
 
         advertisement_length_tolerance_in_frames = (
@@ -408,43 +399,100 @@ class RGBVideo:
             f"Advertisement length tolerance: {advertisement_length_tolerance}s = {advertisement_length_tolerance_in_frames} frames"
         )
 
-        for shot in self.shots:
-            print(
-                f"({self.__frame_to_time_conversion(shot.start_frame_index, True)},{self.__frame_to_time_conversion(shot.end_frame_index, True)}): {shot.average_absolute_amplitude}"
-            )
+        # Set to -(advertisement_amplitude_delta_tolerance + 1). Since the theoretical minimum is 0, this is 1 less than the negative tolerance so won't get false positive match
+        # minimum_advertisement_amplitude_for_no_false_positive = -1 * (
+        #     advertisement_amplitude_delta_tolerance + 1
+        # )
 
-        # for shot_index, shot in enumerate(self.shots):
-        #     for compare_shot_index, compare_shot in enumerate(self.shots):
-        #         if shot_index == compare_shot_index:
-        #             continue
+        # Loop backwards so consecutive shots from the back can be merged
+        # Start from 1 before the end
+        for shot_index in range(len(self.shots) - 2, -1, -1):
+            shot = self.shots[shot_index]
+            next_shot = self.shots[shot_index + 1]
 
-        #         compare_shot_audio_length = min(shot, compare_shot)
+            if len(shot.frames_buffer) > advertisement_length_tolerance_in_frames:
+                print(f"Shot {shot_index} exceeds length tolerance. Skipping.")
+                continue
 
-        #         shot.normalize_audio_buffer_to_length(compare_shot_audio_length)
-        #         compare_shot.normalize_audio_buffer_to_length(compare_shot_audio_length)
+            elif (
+                len(shot.frames_buffer) + len(next_shot.frames_buffer)
+                > advertisement_length_tolerance_in_frames
+            ):
+                print(
+                    f"Merging of shots {shot_index} and {shot_index + 1} would exceed length tolerence. Skipping."
+                )
+                continue
 
-        # for shot_index in range(len(self.shots) - 1):
-        #     current_shot = self.shots[shot_index]
-        #     next_shot = self.shots[shot_index + 1]
+            if (
+                abs(
+                    next_shot.average_absolute_amplitude
+                    - shot.average_absolute_amplitude
+                )
+                <= advertisement_amplitude_delta_tolerance
+            ):
+                print(
+                    f"Shots {shot_index} ({shot.average_absolute_amplitude}) and {shot_index + 1} ({next_shot.average_absolute_amplitude}) within audio tolerance. Merging."
+                )
+                self.merge_shots(shot_index, shot_index + 1)
 
-        #     current_shot_audio_buffer_length = len(current_shot.audio_buffer)
-        #     next_shot_audio_buffer_length = len(next_shot.audio_buffer)
+    # Concatenates shot 2 to shot 1
+    def merge_shots(self, shot_index_1: int, shot_index_2: int):
+        # Concatenate base shot and concatenate shot
+        base_shot = self.shots[shot_index_1]
+        concatenate_shot = self.shots[shot_index_2]
 
-        #     compare_shot_audio_length = min(
-        #         current_shot_audio_buffer_length, next_shot_audio_buffer_length
-        #     )
+        base_shot.frames_buffer = np.concatenate(
+            [base_shot.frames_buffer, concatenate_shot.frames_buffer]
+        )
 
-        #     current_shot.normalize_audio_buffer_to_length(compare_shot_audio_length)
-        #     next_shot.normalize_audio_buffer_to_length(compare_shot_audio_length)
+        base_shot.audio_buffer = np.concatenate(
+            [base_shot.audio_buffer, concatenate_shot.audio_buffer]
+        )
 
-        #     dist = RGB_Util.compare_audio_buffers(
-        #         current_shot.normalized_audio_buffer, next_shot.normalized_audio_buffer
-        #     )
+        # if shot_index_1 < shot_index_2:
+        #     # If shot 1 is before than shot 2
+        #     # - Shots before shot 1 are unaffected
+        #     # - Shots strictly between shot 1 and shot 2 have their start index pushed length of shot 2
+        #     # - Shots after shot 2 are unaffected
+        #     # - Shot 2 is removed
+        #     for shot_index in range(shot_index_1 + 1, shot_index_2):
 
-        #     average_dist = dist / compare_shot_audio_length
-        #     print(
-        #         f"Between ({self.__frame_to_time_conversion(current_shot.start_frame_index, True)},{self.__frame_to_time_conversion(current_shot.end_frame_index, True)}) and ({self.__frame_to_time_conversion(next_shot.start_frame_index, True)},{self.__frame_to_time_conversion(next_shot.end_frame_index, True)}) = {average_dist}"
-        #     )
+        #         print("Prob never called anyways 1")
+        #         exit(1)
+
+        #         self.shots[shot_index].start_audio_index += len(
+        #             concatenate_shot.audio_buffer
+        #         )
+        #         self.shots[shot_index].start_frame_index += len(
+        #             concatenate_shot.frames_buffer
+        #         )
+
+        # elif shot_index_1 > shot_index_2:
+        #     # If shot 1 is after shot 2
+        #     # Prob never gonna happen
+        #     print("Prob never called anyways 2")
+        #     exit(1)
+
+        del self.shots[shot_index_2]
+
+        # Do not call self.remove_shot(). This should only be used if an entire shot is removed.
+        # Since merging causes a previous shot to extend their time, removing the concantenated shot is enough
+        # self.remove_shot() will result in all shots afer concatenate_shot_index to have their times adjusted
+
+    def remove_shot(self, remove_shot_index: int):
+        print(f"Removing shot {remove_shot_index}")
+
+        # If a shot is removed, get the frame and audio buffer lengths
+        # and subtract the start frame index from all shots strictly after the shot_index by these lengths
+
+        shot_frame_buffer_length = len(self.shots[remove_shot_index].frames_buffer)
+        shot_audio_buffer_length = len(self.shots[remove_shot_index].audio_buffer)
+
+        for shot_index in range(remove_shot_index + 1, len(self.shots)):
+            self.shots[shot_index].start_frame_index -= shot_frame_buffer_length
+            self.shots[shot_index].start_audio_index -= shot_audio_buffer_length
+
+        del self.shots[remove_shot_index]
 
     def scan_for_logos(
         self, frame_skip=100, draw_bounding_boxes: bool = True, label_font_size=24
@@ -461,9 +509,7 @@ class RGBVideo:
 
             detected_logos_in_shot: List[str] = []
 
-            for frame_index in range(
-                0, shot.end_frame_index - shot.start_frame_index + 1, frame_skip
-            ):
+            for frame_index in range(0, len(shot.frames_buffer), frame_skip):
                 img = Image.fromarray(self.frames_buffer[frame_index])
                 img.save(buffer, format="PNG")
                 response = client.logo_detection(
@@ -512,42 +558,72 @@ class RGBVideo:
 
         print(detected_logos)
 
+    def naive_audio_classifier(
+        self,
+        advertisement_length_tolerance: int = 20,
+        advertisement_amplitude_delta_tolerance: int = 300,
+    ):
+        print("-- Running naïve audio classifier")
+
+        advertisement_length_tolerance_in_frames = (
+            advertisement_length_tolerance * self.frame_rate
+        )
+
+        number_of_long_shots = 0
+        average_long_shot_absolute_amplitude = 0
+
+        for shot in self.shots:
+            if len(shot.frames_buffer) > advertisement_length_tolerance_in_frames:
+                number_of_long_shots += 1
+                average_long_shot_absolute_amplitude += shot.average_absolute_amplitude
+
+        average_long_shot_absolute_amplitude /= number_of_long_shots
+
+        # Loop back and remove ads
+        for shot_index in range(len(self.shots) - 1, -1, -1):
+            shot = self.shots[shot_index]
+            if len(shot.frames_buffer) <= advertisement_length_tolerance_in_frames:
+                if (
+                    abs(
+                        shot.average_absolute_amplitude
+                        - average_long_shot_absolute_amplitude
+                    )
+                    >= advertisement_amplitude_delta_tolerance
+                ):
+                    print(f"Shot {shot_index} classified as an ad")
+                    self.remove_shot(shot_index)
+
+    # This is an expensive operation so should be done at the end
     def rebuild_frames_and_audio_buffers(self):
         self.__rebuild_frames_buffer()
         self.__rebuild_audio_buffer()
-
-    def remove_shot(self, shot_index: int):
-        print(f"Removing shot {shot_index}")
-
-    def _debug_remove_frames(self):
-        del self.shots[0]
-        del self.shots[0]
+        self.verify_shots_continuity()
 
     def __rebuild_frames_buffer(self):
-        print(" -- Rebuilding frames buffer --")
+        print("-- Rebuilding frames buffer")
         self.frames_buffer = np.concatenate([shot.frames_buffer for shot in self.shots])
-        print(" -- Frames buffer rebuilt --")
+        print("-- Frames buffer rebuilt")
 
     def __rebuild_audio_buffer(self):
-        print(" -- Rebuilding audio buffer --")
+        print("-- Rebuilding audio buffer")
         self.audio_buffer = np.concatenate([shot.audio_buffer for shot in self.shots])
-        print(" -- Audio buffer rebuilt --")
+        print("-- Audio buffer rebuilt")
 
     def dump_rgb_file(self):
-        print(" -- Dumping .rgb file --")
+        print("-- Dumping .rgb file")
 
         # Create a temporary buffer with the RGB axis moved back and dump
         dump_frames_buffer = np.moveaxis(self.frames_buffer, 3, 1)
         dump_frames_buffer.tofile("new.rgb")
 
-        print(" -- new.rgb file dumped --")
+        print("-- new.rgb file dumped")
 
     def dump_audio_file(self):
-        print(" -- Dumping .wav file --")
+        print("-- Dumping .wav file")
 
         wavfile.write("new.wav", self.audio_sample_rate, self.audio_buffer)
 
-        print(" -- new.wav file dumped --")
+        print("-- new.wav file dumped")
 
     def __frame_to_time_conversion(self, frame_index, round_time: bool = False):
         t = frame_index / self.frame_rate
@@ -570,10 +646,10 @@ class RGBVideo:
 
 
 def folder_structure_message():
-    print(" -- Add the following .env variables --")
+    print("-- Add the following .env variables")
     print('GOOGLE_VISION_CREDS_JSON="creds/google_vision_creds.json"')
     print()
-    print(" -- Please create the following folder structure --")
+    print("-- Please create the following folder structure")
     print("./creds/google_vision_creds.json")
     print("./dataset-001/dataset1/{Ads,Brand Images,Videos}")
     print("./dataset-002/dataset2/{Ads,Brand Images,Videos}")
@@ -592,34 +668,7 @@ def main():
         video_file_name="dataset-001/dataset1/Videos/data_test1.rgb",
         audio_file_name="dataset-001/dataset1/Videos/data_test1.wav",
     )
-    # rgb_video.scan_video_for_shots()
-    rgb_video._debug_set_shots(
-        [
-            (0, 1178),
-            (1179, 2399),
-            (2400, 2849),
-            (2850, 4349),
-            (4350, 5549),
-            (5550, 5924),
-            (5925, 5986),
-            (5987, 5999),
-            (6000, 8999),
-        ]
-    )
-    # rgb_video.merge_shots_using_audio_hueristic()
-    # rgb_video.dump_frames(output_folder="video_frames/video_frames_1")
-    # # rgb_video.dump_frames(output_folder="video_frames_3")
-    # rgb_video.dump_audio_file()
-
-    # rgb_video = RGBVideo(
-    #     video_file_name="dataset-001/dataset/Videos/data_test1.rgb",
-    #     audio_file_name="dataset-001/dataset/Videos/data_test1.wav",
-    # )
-
-    # Ads - 20s
-
-    # rgb_video.dump_frames()
-    # rgb_video.scan_video_for_shots()
+    rgb_video.scan_video_for_shots()
     # rgb_video._debug_set_shots(
     #     [
     #         (0, 1178),
@@ -633,16 +682,11 @@ def main():
     #         (6000, 8999),
     #     ]
     # )
-
-    # # rgb_video.merge_shots_using_audio_hueristic()
-    # rgb_video.rebuild_frames_and_audio_buffers()
-    # # rgb_video.dump_frames(output_folder="video_frames_2")
-    # # rgb_video.dump_rgb_file()
-    # rgb_video.dump_audio_file()
-
-    rgb_video.scan_for_logos()
+    rgb_video.merge_shots_using_audio_hueristic()
+    rgb_video.naive_audio_classifier()
     rgb_video.rebuild_frames_and_audio_buffers()
-    rgb_video.dump_frames()
+    # rgb_video.dump_frames()
+    rgb_video.dump_rgb_file()
 
 
 if __name__ == "__main__":
