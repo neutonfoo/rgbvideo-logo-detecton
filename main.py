@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import os
 from io import BytesIO
-from typing import List, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 import cv2 as cv
 import numpy as np
@@ -152,7 +154,6 @@ class RGBVideo:
         self.channels = channels
         self.frame_rate = frame_rate
         self.ad_name = ad_name
-        self.ads_to_splice: List[RGBVideo] = []
 
         self.shots: List[Shot] = []
 
@@ -166,6 +167,8 @@ class RGBVideo:
         # If not, the video will be treated as a single shot (like an ad),
         # which makes it easy to move into another video
         self.__init_shots()
+
+        print("Done\n")
 
     def __read_video_file(self):
         self.frames_buffer = np.fromfile(self.video_file_name, dtype=np.uint8)
@@ -206,7 +209,7 @@ class RGBVideo:
             if self.audio_buffer.shape[0] < expected_number_of_samples:
 
                 print(
-                    f"-- Missing {expected_number_of_samples - self.audio_buffer.shape[0]} samples. Applying zero-padding on right side."
+                    f"- Missing {expected_number_of_samples - self.audio_buffer.shape[0]} samples. Applying zero-padding on right side."
                 )
 
                 self.audio_buffer = np.pad(
@@ -234,15 +237,26 @@ class RGBVideo:
             )
         )
 
-    def dump_frames(self, output_folder="video_frames/temp") -> None:
-        print(f"Dumping frames into '{output_folder}' folder")
+    def index_ads_to_inject(self, ads_to_inject: List[RGBVideo] = []):
+        # Cannot insert an ad into another ad. If ad_name is empty, this is the base video
+        assert not self.ad_name
+
+        self.ads_to_inject = {}
+
+        for ad_to_inject in ads_to_inject:
+            self.ads_to_inject[ad_to_inject.ad_name] = ad_to_inject
+
+        print(f"-- Ads indexed to base video: {', '.join(self.ads_to_inject.keys())}\n")
+
+    def dump_frames(self, output_folder="temp") -> None:
+        print(f"-- Dumping frames into '{output_folder}' folder")
 
         for frame_index, frame_buffer in enumerate(self.frames_buffer):
             im = Image.fromarray(frame_buffer)
             im.save(f"{output_folder}/{frame_index}.png")
 
             if frame_index % 100 == 0:
-                print(f"-- At frame {frame_index} of {self.frames_buffer.shape[0]}")
+                print(f"At frame {frame_index} of {self.frames_buffer.shape[0]}")
 
         print("Frame dump completed")
 
@@ -254,6 +268,9 @@ class RGBVideo:
         print(
             f"-- Detecting shots with '{RGB_Util.get_histogram_comparison_method_name(compare_method)}' with threshold {compare_threshold}"
         )
+
+        # Only base video can be analyzed for shots
+        assert not self.ad_name
 
         # Clear current shots array
         self.shots.clear()
@@ -313,6 +330,8 @@ class RGBVideo:
                 f"Shot from frames {shot_frame_start_index} to {shot_frame_end_index}"
             )
 
+        print()
+
         self.verify_shots_continuity()
 
     def verify_shots_continuity(self):
@@ -347,13 +366,13 @@ class RGBVideo:
             print("-- Shots continuity error")
             exit(1)
 
-        else:
-            print("-- Shots continuity verified")
+        print("-- Shots continuity verified")
+        print()
 
     def _debug_set_shots(self, shots: List[Tuple[int, int]]):
 
         print("-- Manually overriding shot detection")
-        print("-- For debug use only")
+        print("- For debug use only")
 
         self.shots.clear()
         for shot in shots:
@@ -385,24 +404,38 @@ class RGBVideo:
                 f"Shot from frames {shot_frame_start_index} to {shot_frame_end_index}"
             )
 
+    def _debug_set_logo_detection(self, detected_logos_in_shots: List[List[str]] = []):
+        print("-- Manually overriding logo detection")
+        print("- For debug use only")
+
+        self.detected_logos_in_shots = detected_logos_in_shots
+
+        print("- Detection results")
+        for shot_index, detected_logos_in_shot in enumerate(
+            self.detected_logos_in_shots
+        ):
+            print(
+                f"Detected logos in shot {shot_index}: {', '.join(detected_logos_in_shot)}"
+            )
+
     def merge_shots_using_audio_hueristic(
         self,
         advertisement_length_tolerance: int = 20,
-        advertisement_amplitude_delta_tolerance: int = 300,
+        advertisement_absolute_amplitude_delta_tolerance: int = 300,
     ):
+
+        print("-- Merging shots with audio hueristics")
 
         advertisement_length_tolerance_in_frames = (
             advertisement_length_tolerance * self.frame_rate
         )
 
         print(
-            f"Advertisement length tolerance: {advertisement_length_tolerance}s = {advertisement_length_tolerance_in_frames} frames"
+            f"- Advertisement length tolerance: {advertisement_length_tolerance}s = {advertisement_length_tolerance_in_frames} frames."
         )
-
-        # Set to -(advertisement_amplitude_delta_tolerance + 1). Since the theoretical minimum is 0, this is 1 less than the negative tolerance so won't get false positive match
-        # minimum_advertisement_amplitude_for_no_false_positive = -1 * (
-        #     advertisement_amplitude_delta_tolerance + 1
-        # )
+        print(
+            f"- Avertisement absolute amplitude delta tolernace: {advertisement_absolute_amplitude_delta_tolerance}."
+        )
 
         # Loop backwards so consecutive shots from the back can be merged
         # Start from 1 before the end
@@ -428,12 +461,14 @@ class RGBVideo:
                     next_shot.average_absolute_amplitude
                     - shot.average_absolute_amplitude
                 )
-                <= advertisement_amplitude_delta_tolerance
+                <= advertisement_absolute_amplitude_delta_tolerance
             ):
                 print(
                     f"Shots {shot_index} ({shot.average_absolute_amplitude}) and {shot_index + 1} ({next_shot.average_absolute_amplitude}) within audio tolerance. Merging."
                 )
                 self.merge_shots(shot_index, shot_index + 1)
+
+        print()
 
     # Concatenates shot 2 to shot 1
     def merge_shots(self, shot_index_1: int, shot_index_2: int):
@@ -494,23 +529,35 @@ class RGBVideo:
 
         del self.shots[remove_shot_index]
 
-    def scan_for_logos(
-        self, frame_skip=100, draw_bounding_boxes: bool = True, label_font_size=24
+        print()
+
+    def scan_shots_for_logos(
+        self,
+        frame_skip=100,
+        label_font_size: int = 24,
     ):
-        detected_logos: Set[str] = set()
+        print(f"-- Scanning video for logos with frame skip {frame_skip}")
+
+        # Since logos come in order, keep a list
+        # Tuple[0] = Logo name, Tuple[1] = Earliest shot of detection
+        self.detected_logos_in_shots: List[List[str]] = []
+        detected_logos_set: Set[str] = set()
 
         # Create empty buffer to store images for base64 encoding
         buffer = BytesIO()
-        if draw_bounding_boxes:
-            label_font = ImageFont.truetype("Roboto-Regular.ttf", label_font_size)
+        label_font = ImageFont.truetype("Roboto-Regular.ttf", label_font_size)
 
         for shot_index, shot in enumerate(self.shots):
-            print(f"-- Scanning shot {shot_index}")
+            print(f"- Scanning shot {shot_index}")
 
-            detected_logos_in_shot: List[str] = []
+            # Detected logos in the current shot
+            self.detected_logos_in_shots.append([])
+            # = self.detected_logos_in_shots[shot_index]
 
             for frame_index in range(0, len(shot.frames_buffer), frame_skip):
-                img = Image.fromarray(self.frames_buffer[frame_index])
+                detected_logos_in_frame: List[str] = []
+
+                img = Image.fromarray(shot.frames_buffer[frame_index])
                 img.save(buffer, format="PNG")
                 response = client.logo_detection(
                     image=vision.Image(content=buffer.getvalue())
@@ -518,50 +565,61 @@ class RGBVideo:
                 logos = response.logo_annotations
 
                 if len(logos) > 0:
-                    if draw_bounding_boxes:
-                        img_logos_labeled = ImageDraw.Draw(img)
+                    img_logos_labeled = ImageDraw.Draw(img)
 
                     for logo in logos:
-                        detected_logos_in_shot.append(logo.description)
+
+                        if logo.description not in detected_logos_set:
+                            self.detected_logos_in_shots[shot_index].append(
+                                logo.description
+                            )
+                            detected_logos_set.add(logo.description)
+
+                        detected_logos_in_frame.append(logo.description)
 
                         print(
-                            f"{logo.description} detected on frame {shot.start_frame_index + frame_index}"
+                            f"'{logo.description}' detected on frame {shot.start_frame_index + frame_index}"
                         )
 
-                        if draw_bounding_boxes:
-                            logo_bounding_box = [
-                                (
-                                    logo.bounding_poly.vertices[0].x,
-                                    logo.bounding_poly.vertices[0].y,
-                                ),
-                                (
-                                    logo.bounding_poly.vertices[2].x,
-                                    logo.bounding_poly.vertices[2].y,
-                                ),
-                            ]
+                        logo_bounding_box = [
+                            (
+                                logo.bounding_poly.vertices[0].x,
+                                logo.bounding_poly.vertices[0].y,
+                            ),
+                            (
+                                logo.bounding_poly.vertices[2].x,
+                                logo.bounding_poly.vertices[2].y,
+                            ),
+                        ]
 
-                            img_logos_labeled.rectangle(
-                                logo_bounding_box, outline="red", width=3
-                            )
-
-                    if draw_bounding_boxes:
-                        img_logos_labeled.text(
-                            xy=(0, self.height - label_font_size),
-                            text=", ".join(detected_logos_in_shot),
-                            fill=(255, 0, 0),
-                            font=label_font,
+                        img_logos_labeled.rectangle(
+                            logo_bounding_box, outline="red", width=3
                         )
-                        shot.frames_buffer[frame_index] = np.asarray(img)
+
+                    img_logos_labeled.text(
+                        xy=(0, self.height - label_font_size),
+                        text=", ".join(detected_logos_in_frame),
+                        fill=(255, 0, 0),
+                        font=label_font,
+                    )
+                    shot.frames_buffer[frame_index] = np.asarray(img)
 
                 buffer.seek(0)
                 buffer.truncate()
 
-        print(detected_logos)
+        print("- Detection results")
 
-    def naive_audio_classifier(
+        for shot_index, detected_logos_in_shot in enumerate(
+            self.detected_logos_in_shots
+        ):
+            print(
+                f"Detected logos in shot {shot_index}: {', '.join(detected_logos_in_shot)}"
+            )
+
+    def naive_ad_audio_classifier_and_nullifier(
         self,
         advertisement_length_tolerance: int = 20,
-        advertisement_amplitude_delta_tolerance: int = 300,
+        advertisement_absolute_amplitude_delta_tolerance: int = 300,
     ):
         print("-- Running naïve audio classifier")
 
@@ -588,10 +646,70 @@ class RGBVideo:
                         shot.average_absolute_amplitude
                         - average_long_shot_absolute_amplitude
                     )
-                    >= advertisement_amplitude_delta_tolerance
+                    >= advertisement_absolute_amplitude_delta_tolerance
                 ):
                     print(f"Shot {shot_index} classified as an ad")
-                    self.remove_shot(shot_index)
+
+                    # self.remove_shot(shot_index)
+
+    def inject_ads(self):
+        print("-- Injecting ads")
+
+        # Have to keep track of number of inserted ads as shot_index offset
+        number_of_inserted_ads = 0
+
+        added_ad_names = set()
+
+        for shot_index, detected_logos_in_shot in enumerate(
+            self.detected_logos_in_shots
+        ):
+            for detected_logo_in_shot in detected_logos_in_shot:
+                if detected_logo_in_shot in self.ads_to_inject.keys():
+                    if detected_logo_in_shot in added_ad_names:
+                        print(
+                            f"{detected_logo_in_shot} advertisement already inserted. Skipping."
+                        )
+                        continue
+                    print(
+                        f"Inserting {detected_logo_in_shot} after shot {shot_index + number_of_inserted_ads}"
+                    )
+
+                    self.insert_rgb_video_after_shot_index(
+                        self.ads_to_inject[detected_logo_in_shot],
+                        shot_index + number_of_inserted_ads,
+                    )
+                    number_of_inserted_ads += 1
+
+                    added_ad_names.add(detected_logo_in_shot)
+
+        print()
+
+    def insert_rgb_video_after_shot_index(
+        self, rgb_video: RGBVideo, insert_shot_index: int
+    ):
+
+        # If inserting video, should only have 1 shot
+        assert len(rgb_video.shots) == 1
+        assert insert_shot_index >= 1
+
+        shot_to_insert = rgb_video.shots[0]
+        prev_shot = self.shots[insert_shot_index]
+
+        # Reassign the start indices to 1 after the frame / audio
+        shot_to_insert.start_frame_index = prev_shot.start_frame_index + len(
+            prev_shot.frames_buffer
+        )
+        shot_to_insert.start_audio_index = prev_shot.start_audio_index + len(
+            prev_shot.audio_buffer
+        )
+
+        for shot_index in range(insert_shot_index + 1, len(self.shots)):
+            self.shots[shot_index].start_frame_index += len(
+                shot_to_insert.frames_buffer
+            )
+            self.shots[shot_index].start_audio_index += len(shot_to_insert.audio_buffer)
+
+        self.shots.insert(insert_shot_index + 1, shot_to_insert)
 
     # This is an expensive operation so should be done at the end
     def rebuild_frames_and_audio_buffers(self):
@@ -600,12 +718,12 @@ class RGBVideo:
         self.verify_shots_continuity()
 
     def __rebuild_frames_buffer(self):
-        print("-- Rebuilding frames buffer")
+        print("-- Rebuilding video frames buffer")
         self.frames_buffer = np.concatenate([shot.frames_buffer for shot in self.shots])
         print("-- Frames buffer rebuilt")
 
     def __rebuild_audio_buffer(self):
-        print("-- Rebuilding audio buffer")
+        print("-- Rebuilding video audio buffer")
         self.audio_buffer = np.concatenate([shot.audio_buffer for shot in self.shots])
         print("-- Audio buffer rebuilt")
 
@@ -660,16 +778,27 @@ def folder_structure_message():
     print("./video_frames/video_frames_3")
 
 
-def main():
-    # folder_structure_message()
-    # exit(0)
+def test_dataset_001():
+    print("Testing dataset_001\n")
 
-    rgb_video = RGBVideo(
+    base_rgb_video = RGBVideo(
         video_file_name="dataset-001/dataset1/Videos/data_test1.rgb",
         audio_file_name="dataset-001/dataset1/Videos/data_test1.wav",
     )
-    rgb_video.scan_video_for_shots()
-    # rgb_video._debug_set_shots(
+    starbucks_ad = RGBVideo(
+        video_file_name="dataset-001/dataset1/Ads/Starbucks_Ad_15s.rgb",
+        audio_file_name="dataset-001/dataset1/Ads/Starbucks_Ad_15s.wav",
+        ad_name="Starbucks",
+    )
+    subway_ad = RGBVideo(
+        video_file_name="dataset-001/dataset1/Ads/Subway_Ad_15s.rgb",
+        audio_file_name="dataset-001/dataset1/Ads/Subway_Ad_15s.wav",
+        ad_name="Subway",
+    )
+
+    base_rgb_video.index_ads_to_inject([starbucks_ad, subway_ad])
+    base_rgb_video.scan_video_for_shots()
+    # base_rgb_video._debug_set_shots(
     #     [
     #         (0, 1178),
     #         (1179, 2399),
@@ -682,11 +811,32 @@ def main():
     #         (6000, 8999),
     #     ]
     # )
-    rgb_video.merge_shots_using_audio_hueristic()
-    rgb_video.naive_audio_classifier()
-    rgb_video.rebuild_frames_and_audio_buffers()
-    # rgb_video.dump_frames()
-    rgb_video.dump_rgb_file()
+
+    base_rgb_video.merge_shots_using_audio_hueristic()
+    base_rgb_video.naive_ad_audio_classifier_and_nullifier()
+    base_rgb_video.verify_shots_continuity()
+    base_rgb_video.scan_shots_for_logos()
+    # base_rgb_video._debug_set_logo_detection(
+    #     [[], ["Subway"], [], ["Starbucks"], [], []]
+    # )
+
+    base_rgb_video.inject_ads()
+    base_rgb_video.rebuild_frames_and_audio_buffers()
+    # base_rgb_video.dump_frames()
+    base_rgb_video.dump_rgb_file()
+    base_rgb_video.dump_audio_file()
+
+
+def test_dataset_002():
+    print("Testing dataset_002")
+
+
+def main():
+    # folder_structure_message()
+    # exit(0)
+    test_dataset_001()
+    # test_dataset_002()
+    # test_dataset_003()
 
 
 if __name__ == "__main__":
