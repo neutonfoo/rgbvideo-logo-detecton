@@ -6,7 +6,7 @@ import cv2 as cv
 import numpy as np
 from dotenv import load_dotenv
 from google.cloud import vision
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from scipy.io import wavfile
 
 load_dotenv()
@@ -165,7 +165,9 @@ class RGBVideo:
 
         self.shots: List[Shot] = []
 
-        print(f"Processing '{self.video_file_name}' and '{self.audio_file_name}'.")
+        print(
+            f" -- Processing '{self.video_file_name}' and '{self.audio_file_name}' -- "
+        )
 
         self.__read_video_file()
         self.__read_audio_file()
@@ -196,7 +198,7 @@ class RGBVideo:
         self.frames_buffer = np.moveaxis(self.frames_buffer, 1, 3)
 
         print(
-            f"'{self.video_file_name}' loaded. {self.number_of_frames} frames loaded into buffer."
+            f"'{self.video_file_name}' loaded into frames_buffer, {self.number_of_frames} frames loaded."
         )
 
     def __read_audio_file(self):
@@ -206,12 +208,16 @@ class RGBVideo:
             )
             expected_number_of_samples = int(self.audio_sample_rate * self.duration)
 
+            print(
+                f"'{self.audio_file_name}' loaded into audio_buffer, {len(self.audio_buffer)} samples loaded. (Expected {expected_number_of_samples} samples.)"
+            )
+
             # We know the expected number of samples from the video data,
             # if the .wav file is missing samples, just pad on the right with 0s
             if self.audio_buffer.shape[0] < expected_number_of_samples:
 
                 print(
-                    f"'{self.audio_file_name}' missing {expected_number_of_samples - self.audio_buffer.shape[0]} samples. Applying zero-padding on right side."
+                    f"-- Missing {expected_number_of_samples - self.audio_buffer.shape[0]} samples. Applying zero-padding on right side."
                 )
 
                 self.audio_buffer = np.pad(
@@ -241,7 +247,7 @@ class RGBVideo:
             )
         )
 
-    def dump_frames(self, output_folder="video_frames") -> None:
+    def dump_frames(self, output_folder="video_frames/temp") -> None:
         print(f"Dumping frames into '{output_folder}' folder")
 
         for frame_index, frame_buffer in enumerate(self.frames_buffer):
@@ -390,7 +396,17 @@ class RGBVideo:
                 f"Shot from frames {shot_frame_start_index} to {shot_frame_end_index}"
             )
 
-    def compute_audio_hueristic(self, advertisement_length_tolerance: int = 20):
+    def merge_shots_using_audio_hueristic(
+        self, advertisement_length_tolerance: int = 20
+    ):
+
+        advertisement_length_tolerance_in_frames = (
+            advertisement_length_tolerance * self.frame_rate
+        )
+
+        print(
+            f"Advertisement length tolerance: {advertisement_length_tolerance}s = {advertisement_length_tolerance_in_frames} frames"
+        )
 
         for shot in self.shots:
             print(
@@ -430,24 +446,69 @@ class RGBVideo:
         #         f"Between ({self.__frame_to_time_conversion(current_shot.start_frame_index, True)},{self.__frame_to_time_conversion(current_shot.end_frame_index, True)}) and ({self.__frame_to_time_conversion(next_shot.start_frame_index, True)},{self.__frame_to_time_conversion(next_shot.end_frame_index, True)}) = {average_dist}"
         #     )
 
-    def scan_for_logos(self, frame_skip=100):
+    def scan_for_logos(
+        self, frame_skip=100, draw_bounding_boxes: bool = True, label_font_size=24
+    ):
         detected_logos: Set[str] = set()
 
+        # Create empty buffer to store images for base64 encoding
         buffer = BytesIO()
-        for frame_index in range(0, self.number_of_frames, frame_skip):
-            img = Image.fromarray(self.frames_buffer[frame_index])
-            img.save(buffer, format="PNG")
+        if draw_bounding_boxes:
+            label_font = ImageFont.truetype("Roboto-Regular.ttf", label_font_size)
 
-            image = vision.Image(content=buffer.getvalue())
-            response = client.logo_detection(image=image)
-            logos = response.logo_annotations
+        for shot_index, shot in enumerate(self.shots):
+            print(f"-- Scanning shot {shot_index}")
 
-            for logo in logos:
-                print(f"{logo.description} detected on frame {frame_index}")
-                detected_logos.add(logo.description)
+            detected_logos_in_shot: List[str] = []
 
-            buffer.seek(0)
-            buffer.truncate()
+            for frame_index in range(
+                0, shot.end_frame_index - shot.start_frame_index + 1, frame_skip
+            ):
+                img = Image.fromarray(self.frames_buffer[frame_index])
+                img.save(buffer, format="PNG")
+                response = client.logo_detection(
+                    image=vision.Image(content=buffer.getvalue())
+                )
+                logos = response.logo_annotations
+
+                if len(logos) > 0:
+                    if draw_bounding_boxes:
+                        img_logos_labeled = ImageDraw.Draw(img)
+
+                    for logo in logos:
+                        detected_logos_in_shot.append(logo.description)
+
+                        print(
+                            f"{logo.description} detected on frame {shot.start_frame_index + frame_index}"
+                        )
+
+                        if draw_bounding_boxes:
+                            logo_bounding_box = [
+                                (
+                                    logo.bounding_poly.vertices[0].x,
+                                    logo.bounding_poly.vertices[0].y,
+                                ),
+                                (
+                                    logo.bounding_poly.vertices[2].x,
+                                    logo.bounding_poly.vertices[2].y,
+                                ),
+                            ]
+
+                            img_logos_labeled.rectangle(
+                                logo_bounding_box, outline="red", width=3
+                            )
+
+                    if draw_bounding_boxes:
+                        img_logos_labeled.text(
+                            xy=(0, self.height - label_font_size),
+                            text=", ".join(detected_logos_in_shot),
+                            fill=(255, 0, 0),
+                            font=label_font,
+                        )
+                        shot.frames_buffer[frame_index] = np.asarray(img)
+
+                buffer.seek(0)
+                buffer.truncate()
 
         print(detected_logos)
 
@@ -455,13 +516,15 @@ class RGBVideo:
         self.__rebuild_frames_buffer()
         self.__rebuild_audio_buffer()
 
+    def remove_shot(self, shot_index: int):
+        print(f"Removing shot {shot_index}")
+
+    def _debug_remove_frames(self):
+        del self.shots[0]
+        del self.shots[0]
+
     def __rebuild_frames_buffer(self):
         print(" -- Rebuilding frames buffer --")
-
-        # Delete the first 2 frames, array is reindexed which is why 0 is deleted twice
-        del self.shots[0]
-        del self.shots[0]
-
         self.frames_buffer = np.concatenate([shot.frames_buffer for shot in self.shots])
         print(" -- Frames buffer rebuilt --")
 
@@ -506,22 +569,29 @@ class RGBVideo:
         return (start_t, end_t)
 
 
+def folder_structure_message():
+    print(" -- Add the following .env variables --")
+    print('GOOGLE_VISION_CREDS_JSON="creds/google_vision_creds.json"')
+    print()
+    print(" -- Please create the following folder structure --")
+    print("./creds/google_vision_creds.json")
+    print("./dataset-001/dataset1/{Ads,Brand Images,Videos}")
+    print("./dataset-002/dataset2/{Ads,Brand Images,Videos}")
+    print("./dataset-003/dataset3/{Ads,Brand Images,Videos}")
+    print("./video_frames/temp")
+    print("./video_frames/video_frames_1")
+    print("./video_frames/video_frames_2")
+    print("./video_frames/video_frames_3")
+
+
 def main():
-    # rgb_video = RGBVideo(
-    #     video_file_name="new.rgb",
-    # )
-    # # rgb_video.dump_frames(output_folder="video_frames_3")
-    # # rgb_video.dump_frames(output_folder="video_frames_3")
-    # rgb_video.dump_audio_file()
+    # folder_structure_message()
+    # exit(0)
 
     rgb_video = RGBVideo(
-        video_file_name="dataset-001/dataset/Videos/data_test1.rgb",
-        audio_file_name="dataset-001/dataset/Videos/data_test1.wav",
+        video_file_name="dataset-001/dataset1/Videos/data_test1.rgb",
+        audio_file_name="dataset-001/dataset1/Videos/data_test1.wav",
     )
-
-    # Ads - 20s
-
-    # rgb_video.dump_frames()
     # rgb_video.scan_video_for_shots()
     rgb_video._debug_set_shots(
         [
@@ -536,14 +606,43 @@ def main():
             (6000, 8999),
         ]
     )
+    # rgb_video.merge_shots_using_audio_hueristic()
+    # rgb_video.dump_frames(output_folder="video_frames/video_frames_1")
+    # # rgb_video.dump_frames(output_folder="video_frames_3")
+    # rgb_video.dump_audio_file()
 
-    # rgb_video.compute_audio_hueristic()
+    # rgb_video = RGBVideo(
+    #     video_file_name="dataset-001/dataset/Videos/data_test1.rgb",
+    #     audio_file_name="dataset-001/dataset/Videos/data_test1.wav",
+    # )
+
+    # Ads - 20s
+
+    # rgb_video.dump_frames()
+    # rgb_video.scan_video_for_shots()
+    # rgb_video._debug_set_shots(
+    #     [
+    #         (0, 1178),
+    #         (1179, 2399),
+    #         (2400, 2849),
+    #         (2850, 4349),
+    #         (4350, 5549),
+    #         (5550, 5924),
+    #         (5925, 5986),
+    #         (5987, 5999),
+    #         (6000, 8999),
+    #     ]
+    # )
+
+    # # rgb_video.merge_shots_using_audio_hueristic()
+    # rgb_video.rebuild_frames_and_audio_buffers()
+    # # rgb_video.dump_frames(output_folder="video_frames_2")
+    # # rgb_video.dump_rgb_file()
+    # rgb_video.dump_audio_file()
+
+    rgb_video.scan_for_logos()
     rgb_video.rebuild_frames_and_audio_buffers()
-    # rgb_video.dump_frames(output_folder="video_frames_2")
-    # rgb_video.dump_rgb_file()
-    rgb_video.dump_audio_file()
-
-    # rgb_video.scan_for_logos()
+    rgb_video.dump_frames()
 
 
 if __name__ == "__main__":
