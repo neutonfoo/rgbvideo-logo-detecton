@@ -251,6 +251,10 @@ class RGBVideo:
             )
         )
 
+        # Shot will have copy of frame and audio buffers. This will help clear memory
+        self.frames_buffer = []
+        self.audio_buffer = []
+
     def index_ads_to_inject(self, ads_to_inject: List[RGBVideo] = []):
         # Cannot insert an ad into another ad. If ad_name is empty, this is the base video
         assert not self.ad_name
@@ -483,7 +487,7 @@ class RGBVideo:
                 self.merge_shots(shot_index, shot_index + 1)
             else:
                 print(
-                    f"Shots {shot_index} and {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping."
+                    f"Shots {shot_index} and {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping. {abs(next_shot.average_absolute_amplitude - shot.average_absolute_amplitude)}"
                 )
 
         print()
@@ -547,8 +551,6 @@ class RGBVideo:
 
         del self.shots[remove_shot_index]
 
-        print()
-
     def scan_shots_for_logos(
         self,
         frame_skip=100,
@@ -566,11 +568,15 @@ class RGBVideo:
         label_font = ImageFont.truetype("Roboto-Regular.ttf", label_font_size)
 
         for shot_index, shot in enumerate(self.shots):
-            print(f"- Scanning shot {shot_index}")
-
             # Detected logos in the current shot
             self.detected_logos_in_shots.append([])
             # = self.detected_logos_in_shots[shot_index]
+
+            if shot.is_ad:
+                print(f"- Shot {shot_index} classified as ad. Skipping.")
+                continue
+
+            print(f"- Scanning shot {shot_index}")
 
             for frame_index in range(0, len(shot.frames_buffer), frame_skip):
                 detected_logos_in_frame: List[str] = []
@@ -636,10 +642,13 @@ class RGBVideo:
 
     def naive_ad_audio_classifier_and_merger(
         self,
+        shot_length_tolerance: int = 1,
         advertisement_length_tolerance: int = 20,
         advertisement_absolute_amplitude_delta_tolerance: int = 300,
     ):
         print("-- Running naïve audio classifier")
+
+        shot_length_tolerance_in_frames = shot_length_tolerance * self.frame_rate
 
         advertisement_length_tolerance_in_frames = (
             advertisement_length_tolerance * self.frame_rate
@@ -663,7 +672,20 @@ class RGBVideo:
         was_prev_shot_an_ad = False
         for shot_index in range(len(self.shots) - 1, -1, -1):
             shot = self.shots[shot_index]
-            if len(shot.frames_buffer) <= advertisement_length_tolerance_in_frames:
+
+            if len(shot.frames_buffer) <= shot_length_tolerance_in_frames:
+                print(
+                    f"Shot {shot_index} classified as an ad. Length of clip falls under minimum threshold {len(shot.frames_buffer)}."
+                )
+
+                self.mark_ad(shot_index)
+
+                if was_prev_shot_an_ad:
+                    self.merge_shots(shot_index, shot_index + 1)
+
+                was_prev_shot_an_ad = True
+
+            elif len(shot.frames_buffer) <= advertisement_length_tolerance_in_frames:
                 if (
                     abs(
                         shot.average_absolute_amplitude
@@ -672,19 +694,26 @@ class RGBVideo:
                     >= advertisement_absolute_amplitude_delta_tolerance
                 ):
                     print(
-                        f"Shot {shot_index} classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}. Base = {average_long_shot_absolute_amplitude}"
+                        f"Shot {shot_index} classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}."
                     )
+
+                    self.mark_ad(shot_index)
 
                     # If the previous shot (or the next in terms of index) was an ad, merge them
                     if was_prev_shot_an_ad:
                         self.merge_shots(shot_index, shot_index + 1)
-                        self.mark_ad(shot_index)
-                        # self.remove_shot(shot_index)
 
                     was_prev_shot_an_ad = True
                 else:
+                    print(
+                        f"Shot {shot_index} not classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}."
+                    )
                     was_prev_shot_an_ad = False
             else:
+                print(
+                    f"Shot {shot_index} exceeds advertisement length tolerance = {shot.average_absolute_amplitude}."
+                )
+
                 was_prev_shot_an_ad = False
 
     def mark_ad(self, shot_index):
@@ -708,13 +737,18 @@ class RGBVideo:
                         detected_logo_in_shot
                     )
 
+        print(f"flattened_and_pruned_detected_logos_in_shots!!!!")
+        print(flattened_and_pruned_detected_logos_in_shots)
+
         number_of_inserted_ads = 0
 
         for shot_index, shot in enumerate(self.shots):
             if shot.is_ad:
                 next_replacement_ad_name = (
-                    flattened_and_pruned_detected_logos_in_shots.pop()
+                    flattened_and_pruned_detected_logos_in_shots.pop(0)
                 )
+
+                print(f"next_replacement_ad_name = {next_replacement_ad_name}")
 
                 self.remove_shot(shot_index)
 
@@ -881,12 +915,13 @@ def run_dataset(
     scan_video_for_shots__compare_threshold: float = 0.7,
     merge_shots_using_audio_hueristic__advertisement_length_tolerance: int = 20,
     merge_shots_using_audio_hueristic__advertisement_absolute_amplitude_delta_tolerance: int = 300,
+    naive_ad_audio_classifier_and_merger__shot_length_tolerance: int = 1,
     naive_ad_audio_classifier_and_merger__advertisement_length_tolerance: int = 20,
     naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance: int = 300,
     scan_shots_for_logos__frame_skip: int = 100,
     scan_shots_for_logos__label_font_size: int = 20,
     dump_rgb_and_wav: bool = True,
-    dump_mp4: bool = True,
+    dump_mp4: bool = False,
     dump_rgb_file__dump_rgb_file_name="new.rgb",
     dump_audio_file__dump_audio_file_name="new.wav",
     dump_mp4_file__dump_mp4_filename="new.mp4",
@@ -900,18 +935,6 @@ def run_dataset(
         compare_method=scan_video_for_shots__compare_method,
         compare_threshold=scan_video_for_shots__compare_threshold,
     )
-    # base_rgb_video._debug_set_shots(
-    #     [
-    #         (0, 33),
-    #         (34, 68),
-    #         (69, 449),
-    #         (450, 5999),
-    #         (6000, 6081),
-    #         (6082, 6196),
-    #         (6197, 6449),
-    #         (6450, 8999),
-    #     ]
-    # )
 
     # Merge shorter, audio-similar shots
     base_rgb_video.merge_shots_using_audio_hueristic(
@@ -921,6 +944,7 @@ def run_dataset(
 
     # Remove shorter shots that are audio-different from the longer shots
     base_rgb_video.naive_ad_audio_classifier_and_merger(
+        shot_length_tolerance=naive_ad_audio_classifier_and_merger__shot_length_tolerance,
         advertisement_length_tolerance=naive_ad_audio_classifier_and_merger__advertisement_length_tolerance,
         advertisement_absolute_amplitude_delta_tolerance=naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance,
     )
@@ -979,9 +1003,10 @@ def test_dataset_1():
     run_dataset(
         base_rgb_video=base_rgb_video,
         ads=[starbucks_ad, subway_ad],
-        dump_rgb_and_wav=False,
-        dump_frames=False,
-        dump_mp4=True,
+        dump_rgb_and_wav=True,
+        # dump_frames=False,
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="dataset_1.mp4",
     )
 
 
@@ -1005,9 +1030,10 @@ def test_dataset_2():
         base_rgb_video=base_rgb_video,
         ads=[mcdonalds_ad, nfl_ad],
         scan_video_for_shots__compare_threshold=0.75,
-        dump_rgb_and_wav=False,
-        dump_frames=False,
-        dump_mp4=True,
+        dump_rgb_and_wav=True,
+        # dump_frames=False,
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="dataset_2.mp4",
     )
 
 
@@ -1031,9 +1057,11 @@ def test_dataset_3():
         base_rgb_video=base_rgb_video,
         ads=[ae_ad, hrc_ad],
         # scan_video_for_shots__compare_threshold=0.75,
-        dump_rgb_and_wav=False,
-        dump_frames=False,
-        dump_mp4=True,
+        naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance=290,
+        dump_rgb_and_wav=True,
+        # dump_frames=False,
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="dataset_3.mp4",
     )
 
 
