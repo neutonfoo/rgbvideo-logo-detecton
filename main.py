@@ -469,7 +469,7 @@ class RGBVideo:
                 self.merge_shots(shot_index, shot_index + 1)
             else:
                 print(
-                    f"Shots {shot_index} and shot {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping."
+                    f"Shots {shot_index} and {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping."
                 )
 
         print()
@@ -641,6 +641,10 @@ class RGBVideo:
 
         average_long_shot_absolute_amplitude /= number_of_long_shots
 
+        print(
+            f"Average long shot absolute amplitude = {average_long_shot_absolute_amplitude}"
+        )
+
         # Loop back and remove ads
         for shot_index in range(len(self.shots) - 1, -1, -1):
             shot = self.shots[shot_index]
@@ -652,9 +656,11 @@ class RGBVideo:
                     )
                     >= advertisement_absolute_amplitude_delta_tolerance
                 ):
-                    print(f"Shot {shot_index} classified as an ad")
+                    print(
+                        f"Shot {shot_index} classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}. Base = {average_long_shot_absolute_amplitude}"
+                    )
 
-                    # self.remove_shot(shot_index)
+                    self.remove_shot(shot_index)
 
     def inject_ads(self):
         print("-- Injecting ads")
@@ -694,7 +700,7 @@ class RGBVideo:
 
         # If inserting video, should only have 1 shot
         assert len(rgb_video.shots) == 1
-        assert insert_shot_index >= 1
+        assert insert_shot_index >= 0
 
         shot_to_insert = rgb_video.shots[0]
         prev_shot = self.shots[insert_shot_index]
@@ -800,8 +806,10 @@ def run_dataset(
     naive_ad_audio_classifier_and_remover__advertisement_absolute_amplitude_delta_tolerance: int = 300,
     scan_shots_for_logos__frame_skip: int = 100,
     scan_shots_for_logos__label_font_size: int = 20,
+    dump_rgb_and_wav: bool = True,
     dump_rgb_file__dump_rgb_file_name="new.rgb",
     dump_audio_file__dump_audio_file_name="new.wav",
+    dump_frames: bool = False,
 ):
     # Index ads to inject
     base_rgb_video.index_ads_to_inject(ads)
@@ -842,63 +850,19 @@ def run_dataset(
     base_rgb_video.rebuild_frames_and_audio_buffers()
 
     # Dump the files
-    base_rgb_video.dump_rgb_file(dump_rgb_file_name=dump_rgb_file__dump_rgb_file_name)
-    base_rgb_video.dump_audio_file(
-        dump_audio_file_name=dump_audio_file__dump_audio_file_name
-    )
+    if dump_rgb_and_wav:
+        base_rgb_video.dump_rgb_file(
+            dump_rgb_file_name=dump_rgb_file__dump_rgb_file_name
+        )
+        base_rgb_video.dump_audio_file(
+            dump_audio_file_name=dump_audio_file__dump_audio_file_name
+        )
+
+    if dump_frames:
+        base_rgb_video.dump_frames()
 
 
-# def test_dataset_001():
-#     base_rgb_video = RGBVideo(
-#         video_file_name="dataset-001/dataset1/Videos/data_test1.rgb",
-#         audio_file_name="dataset-001/dataset1/Videos/data_test1.wav",
-#     )
-#     starbucks_ad = RGBVideo(
-#         video_file_name="dataset-001/dataset1/Ads/Starbucks_Ad_15s.rgb",
-#         audio_file_name="dataset-001/dataset1/Ads/Starbucks_Ad_15s.wav",
-#         ad_name="Starbucks",
-#     )
-#     subway_ad = RGBVideo(
-#         video_file_name="dataset-001/dataset1/Ads/Subway_Ad_15s.rgb",
-#         audio_file_name="dataset-001/dataset1/Ads/Subway_Ad_15s.wav",
-#         ad_name="Subway",
-#     )
-
-#     base_rgb_video.index_ads_to_inject([starbucks_ad, subway_ad])
-#     # base_rgb_video.scan_video_for_shots()
-#     base_rgb_video._debug_set_shots(
-#         [
-#             (0, 1178),
-#             (1179, 2399),
-#             (2400, 2849),
-#             (2850, 4349),
-#             (4350, 5549),
-#             (5550, 5924),
-#             (5925, 5986),
-#             (5987, 5999),
-#             (6000, 8999),
-#         ]
-#     )
-
-#     base_rgb_video.merge_shots_using_audio_hueristic()
-#     base_rgb_video.naive_ad_audio_classifier_and_remover()
-#     base_rgb_video.verify_shots_continuity()
-#     # base_rgb_video.scan_shots_for_logos()
-#     # base_rgb_video._debug_set_logo_detection(
-#     #     [[], ["Subway"], [], ["Starbucks"], [], []]
-#     # )
-
-#     base_rgb_video.inject_ads()
-#     base_rgb_video.rebuild_frames_and_audio_buffers()
-#     # base_rgb_video.dump_frames()
-#     base_rgb_video.dump_rgb_file()
-#     base_rgb_video.dump_audio_file()
-
-
-def main():
-    # folder_structure_message()
-    # exit(0)
-
+def test_dataset_1():
     base_rgb_video = RGBVideo(
         video_file_name="dataset-001/dataset1/Videos/data_test1.rgb",
         audio_file_name="dataset-001/dataset1/Videos/data_test1.wav",
@@ -915,8 +879,37 @@ def main():
     )
 
     run_dataset(base_rgb_video=base_rgb_video, ads=[starbucks_ad, subway_ad])
-    # test_dataset_002()
-    # test_dataset_003()
+
+
+def test_dataset_2():
+    base_rgb_video = RGBVideo(
+        video_file_name="dataset-002/dataset2/Videos/data_test2.rgb",
+        audio_file_name="dataset-002/dataset2/Videos/data_test2.wav",
+    )
+    mcdonalds_ad = RGBVideo(
+        video_file_name="dataset-002/dataset2/Ads/mcd_Ad_15s.rgb",
+        audio_file_name="dataset-002/dataset2/Ads/mcd_Ad_15s.wav",
+        ad_name="McDonald's",
+    )
+    nfl_ad = RGBVideo(
+        video_file_name="dataset-002/dataset2/Ads/nfl_Ad_15s.rgb",
+        audio_file_name="dataset-002/dataset2/Ads/nfl_Ad_15s.wav",
+        ad_name="NFL",
+    )
+
+    run_dataset(
+        base_rgb_video=base_rgb_video,
+        ads=[mcdonalds_ad, nfl_ad],
+        scan_video_for_shots__compare_threshold=0.75,
+        dump_frames=False,
+    )
+
+
+def main():
+    # folder_structure_message()
+    # exit(0)
+    # test_dataset_1()
+    test_dataset_2()
 
 
 if __name__ == "__main__":
