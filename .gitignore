@@ -4,10 +4,9 @@ video_frames
 dataset-001
 dataset-002
 dataset-003
-dataset-004
+test1
 
-new.rgb
-new.wav
+output
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

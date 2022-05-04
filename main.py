@@ -19,9 +19,6 @@ client = vision.ImageAnnotatorClient.from_service_account_json(
 )
 
 
-# TODO: Implement mp4 generation
-
-
 class RGB_Util:
     @staticmethod
     def compare_histograms(
@@ -85,27 +82,6 @@ class Shot:
 
     def compute_average_absolute_amplitude(self):
         self.average_absolute_amplitude = np.mean(np.abs(self.audio_buffer))
-
-        # self.sign_changes = (
-        #     np.sum(
-        #         np.diff(np.sign(self.audio_buffer - np.mean(self.audio_buffer))) != 0
-        #     )
-        #     * 1
-        # )
-
-        # self.sign_changes = 0
-
-        # is_sign_positive = self.audio_buffer[0] >= 0
-
-        # for x in self.audio_buffer:
-        #     if is_sign_positive and x < 0:
-        #         self.sign_changes += 1
-        #         is_sign_positive = False
-        #     elif not is_sign_positive and x > 0:
-        #         self.sign_changes += 1
-        #         is_sign_positive = True
-
-        # self.sign_changes /= len(self.audio_buffer)
 
     def normalize_audio_buffer_to_length(self, normalization_length: int):
         side_buffers = 0
@@ -251,10 +227,6 @@ class RGBVideo:
             )
         )
 
-        # Shot will have copy of frame and audio buffers. This will help clear memory
-        self.frames_buffer = []
-        self.audio_buffer = []
-
     def index_ads_to_inject(self, ads_to_inject: List[RGBVideo] = []):
         # Cannot insert an ad into another ad. If ad_name is empty, this is the base video
         assert not self.ad_name
@@ -322,11 +294,14 @@ class RGBVideo:
                 )
 
                 start_frame_index = frame_index + 1
-                print(f"Frame {frame_index} -> {frame_index + 1} = {compare_val}")
+                print(
+                    f"Transition from frame {frame_index} to {frame_index + 1}. Delta = {compare_val}"
+                )
 
         # Add remaining video as last shot
+        # frame_index + 1 is the last frame index because the loop above doesn't consider the last frame
         start_audio_index = self.__frame_to_audio_conversation(start_frame_index)[0]
-        end_audio_index = self.__frame_to_audio_conversation(frame_index)[1]
+        end_audio_index = self.__frame_to_audio_conversation(frame_index + 1)[1]
 
         self.shots.append(
             Shot(
@@ -340,15 +315,14 @@ class RGBVideo:
         )
 
         # Timestamp shots
-        for shot in self.shots:
+        print("- Shot detection summary")
+        for shot_index, shot in enumerate(self.shots):
             shot_frame_start_index = shot.start_frame_index
             shot_frame_end_index = shot_frame_start_index + len(shot.frames_buffer) - 1
 
             print(
-                f"Shot from frames {shot_frame_start_index} to {shot_frame_end_index}"
+                f"Shot {shot_index} from frame {shot_frame_start_index} to {shot_frame_end_index}"
             )
-
-        print()
 
         self.verify_shots_continuity()
 
@@ -384,8 +358,7 @@ class RGBVideo:
             print("-- Shots continuity error")
             exit(1)
 
-        print("-- Shots continuity verified")
-        print()
+        print("Shots continuity verified")
 
     def _debug_set_shots(self, shots: List[Tuple[int, int]]):
 
@@ -489,8 +462,6 @@ class RGBVideo:
                 print(
                     f"Shots {shot_index} and {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping. {abs(next_shot.average_absolute_amplitude - shot.average_absolute_amplitude)}"
                 )
-
-        print()
 
     # Concatenates shot 2 to shot 1
     def merge_shots(self, shot_index_1: int, shot_index_2: int):
@@ -637,7 +608,7 @@ class RGBVideo:
             self.detected_logos_in_shots
         ):
             print(
-                f"Detected logos in shot {shot_index}: {', '.join(detected_logos_in_shot)}"
+                f"Detected logos in shot {shot_index}: {', '.join(detected_logos_in_shot) if len(detected_logos_in_shot) > 0 else '(No ads detected)'}"
             )
 
     def naive_ad_audio_classifier_and_merger(
@@ -675,7 +646,7 @@ class RGBVideo:
 
             if len(shot.frames_buffer) <= shot_length_tolerance_in_frames:
                 print(
-                    f"Shot {shot_index} classified as an ad. Length of clip falls under minimum threshold {len(shot.frames_buffer)}."
+                    f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) classified as an ad. Length of clip falls under minimum threshold = {len(shot.frames_buffer)} frames."
                 )
 
                 self.mark_ad(shot_index)
@@ -694,7 +665,7 @@ class RGBVideo:
                     >= advertisement_absolute_amplitude_delta_tolerance
                 ):
                     print(
-                        f"Shot {shot_index} classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}."
+                        f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}. Delta = {abs(shot.average_absolute_amplitude - average_long_shot_absolute_amplitude)}"
                     )
 
                     self.mark_ad(shot_index)
@@ -706,15 +677,21 @@ class RGBVideo:
                     was_prev_shot_an_ad = True
                 else:
                     print(
-                        f"Shot {shot_index} not classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}."
+                        f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) not classified as an ad. Absolute amplitude = {shot.average_absolute_amplitude}. Delta = {abs(shot.average_absolute_amplitude - average_long_shot_absolute_amplitude)}"
                     )
                     was_prev_shot_an_ad = False
             else:
                 print(
-                    f"Shot {shot_index} exceeds advertisement length tolerance = {shot.average_absolute_amplitude}."
+                    f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) exceeds advertisement length tolerance = {len(shot.frames_buffer)} frames."
                 )
 
                 was_prev_shot_an_ad = False
+
+        print("- Merged Shots Summary")
+        for shot_index, shot in enumerate(self.shots):
+            print(
+                f"Shot {shot_index} from {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1} --> { 'Classified as ad.' if shot.is_ad else 'Not classified as ad.'}"
+            )
 
     def mark_ad(self, shot_index):
         self.shots[shot_index].is_ad = True
@@ -761,37 +738,84 @@ class RGBVideo:
                 if len(flattened_and_pruned_detected_logos_in_shots) == 0:
                     break
 
-    # def inject_ads(self):
-    #     print("-- Injecting ads")
+    def replace_ads_2(self):
+        print("-- Replacing ads")
 
-    #     # Have to keep track of number of inserted ads as shot_index offset
-    #     number_of_inserted_ads = 0
+        print("- Pruning detected logos")
 
-    #     added_ad_names = set()
+        pruned_detected_logos_in_shots: List[List[str]] = []
+        seen_logos = set()
 
-    #     for shot_index, detected_logos_in_shot in enumerate(
-    #         self.detected_logos_in_shots
-    #     ):
-    #         for detected_logo_in_shot in detected_logos_in_shot:
-    #             if detected_logo_in_shot in self.ads_to_inject.keys():
-    #                 if detected_logo_in_shot in added_ad_names:
-    #                     print(
-    #                         f"{detected_logo_in_shot} advertisement already inserted. Skipping."
-    #                     )
-    #                     continue
-    #                 print(
-    #                     f"Inserting {detected_logo_in_shot} after shot {shot_index + number_of_inserted_ads}"
-    #                 )
+        for shot_index, detected_logos_in_shot in enumerate(
+            self.detected_logos_in_shots
+        ):
+            pruned_detected_logos_in_shots.append([])
+            # Referenced with pruned_detected_logos_in_shots[shot_index]
 
-    #                 self.insert_rgb_video_after_shot_index(
-    #                     self.ads_to_inject[detected_logo_in_shot],
-    #                     shot_index + number_of_inserted_ads,
-    #                 )
-    #                 number_of_inserted_ads += 1
+            for detected_logo_in_shot in detected_logos_in_shot:
 
-    #                 added_ad_names.add(detected_logo_in_shot)
+                # If detected logo is one that has to be replaced
+                if detected_logo_in_shot in self.ads_to_inject.keys():
 
-    #     print()
+                    # If detected logo already seen
+                    if detected_logo_in_shot in seen_logos:
+                        continue
+
+                    pruned_detected_logos_in_shots[shot_index].append(
+                        detected_logo_in_shot
+                    )
+                    seen_logos.add(detected_logo_in_shot)
+
+        print("- Pruned detected logos")
+        for shot_index, detected_logos_in_shot in enumerate(
+            pruned_detected_logos_in_shots
+        ):
+            print(f"Shot {shot_index}: {', '.join(detected_logos_in_shot)}")
+
+        print("- Replacing ads")
+
+        number_of_removed_unreplaced_ads = 0
+
+        flattened_ads_to_inject = []
+
+        for shot_index, shot in enumerate(self.shots):
+
+            # Concatenate the logos that were detected in the current shot
+            flattened_ads_to_inject += pruned_detected_logos_in_shots[shot_index]
+
+            if shot.is_ad:
+                print(f"- Shot {shot_index} is an ad. Removing.")
+
+                # is_ad_replaced = False
+
+                for ad_to_inject_index in range(
+                    len(flattened_ads_to_inject) - 1, -1, -1
+                ):
+
+                    ad_to_inject_name = flattened_ads_to_inject[ad_to_inject_index]
+
+                    print(
+                        f"{ad_to_inject_name} detected in a previous shot. Inserting ad after shot {shot_index}"
+                    )
+                    self.insert_rgb_video_after_shot_index(
+                        self.ads_to_inject[ad_to_inject_name],
+                        shot_index,
+                    )
+
+                    # is_ad_replaced = True
+
+                    # Removed ad from index
+                    del self.ads_to_inject[ad_to_inject_name]
+
+                    # Remove ad from list
+                    flattened_ads_to_inject.pop()
+
+                    # break
+
+                self.remove_shot(shot_index)
+
+                # if not is_ad_replaced:
+                #     number_of_removed_unreplaced_ads += 1
 
     def insert_rgb_video_after_shot_index(
         self, rgb_video: RGBVideo, insert_shot_index: int
@@ -836,12 +860,12 @@ class RGBVideo:
     def __rebuild_frames_buffer(self):
         print("-- Rebuilding video frames buffer")
         self.frames_buffer = np.concatenate([shot.frames_buffer for shot in self.shots])
-        print("-- Frames buffer rebuilt")
+        print("Frames buffer rebuilt")
 
     def __rebuild_audio_buffer(self):
         print("-- Rebuilding video audio buffer")
         self.audio_buffer = np.concatenate([shot.audio_buffer for shot in self.shots])
-        print("-- Audio buffer rebuilt")
+        print("Audio buffer rebuilt")
 
     def dump_rgb_file(self, dump_rgb_file_name: str):
 
@@ -851,25 +875,29 @@ class RGBVideo:
 
         # Create a temporary buffer with the RGB axis moved back and dump
         dump_frames_buffer = np.moveaxis(self.frames_buffer, 3, 1)
-        dump_frames_buffer.tofile("new.rgb")
+        dump_frames_buffer.tofile(f"output/{dump_rgb_file_name}")
 
-        print(f"-- {dump_rgb_file_name} file dumped")
+        print(f"output/{dump_rgb_file_name} file dumped")
 
     def dump_audio_file(self, dump_audio_file_name: str):
         assert dump_audio_file_name.endswith(".wav")
 
         print(f"-- Dumping {dump_audio_file_name} file")
 
-        wavfile.write("new.wav", self.audio_sample_rate, self.audio_buffer)
+        wavfile.write(
+            f"output/{dump_audio_file_name}", self.audio_sample_rate, self.audio_buffer
+        )
 
-        print(f"-- {dump_audio_file_name} file dumped")
+        print(f"output/{dump_audio_file_name} file dumped")
 
     def dump_mp4_file(self, dump_mp4_filename: str):
         print(f"-- Dumping {dump_mp4_filename} file")
 
-        imageio.mimwrite(dump_mp4_filename, self.frames_buffer, fps=self.frame_rate)
+        imageio.mimwrite(
+            f"output/{dump_mp4_filename}", self.frames_buffer, fps=self.frame_rate
+        )
 
-        print(f"-- {dump_mp4_filename} file dumped")
+        print(f"output/{dump_mp4_filename} file dumped")
 
     def __frame_to_time_conversion(self, frame_index, round_time: bool = False):
         t = frame_index / self.frame_rate
@@ -921,9 +949,9 @@ def run_dataset(
     scan_shots_for_logos__frame_skip: int = 100,
     scan_shots_for_logos__label_font_size: int = 20,
     dump_rgb_and_wav: bool = True,
-    dump_mp4: bool = False,
     dump_rgb_file__dump_rgb_file_name="new.rgb",
     dump_audio_file__dump_audio_file_name="new.wav",
+    dump_mp4: bool = False,
     dump_mp4_file__dump_mp4_filename="new.mp4",
     dump_frames: bool = False,
 ):
@@ -957,10 +985,10 @@ def run_dataset(
         frame_skip=scan_shots_for_logos__frame_skip,
         label_font_size=scan_shots_for_logos__label_font_size,
     )
-    # base_rgb_video._debug_set_logo_detection([[], ["NFL", "McDonald's"], [], []])
 
     # Inject ads
-    base_rgb_video.replace_ads()
+    # base_rgb_video.replace_ads()
+    base_rgb_video.replace_ads_2()
     # base_rgb_video.inject_ads()
 
     # Rebuild the RGBVideo frame and audio buffers.
@@ -1003,10 +1031,12 @@ def test_dataset_1():
     run_dataset(
         base_rgb_video=base_rgb_video,
         ads=[starbucks_ad, subway_ad],
-        dump_rgb_and_wav=True,
         # dump_frames=False,
-        # dump_mp4=True,
-        # dump_mp4_file__dump_mp4_filename="dataset_1.mp4",
+        dump_rgb_and_wav=True,
+        dump_rgb_file__dump_rgb_file_name="dataset_1.rgb",
+        dump_audio_file__dump_audio_file_name="dataset_1.wav",
+        dump_mp4=True,
+        dump_mp4_file__dump_mp4_filename="dataset_1.mp4",
     )
 
 
@@ -1030,10 +1060,12 @@ def test_dataset_2():
         base_rgb_video=base_rgb_video,
         ads=[mcdonalds_ad, nfl_ad],
         scan_video_for_shots__compare_threshold=0.75,
-        dump_rgb_and_wav=True,
         # dump_frames=False,
-        # dump_mp4=True,
-        # dump_mp4_file__dump_mp4_filename="dataset_2.mp4",
+        dump_rgb_and_wav=True,
+        dump_rgb_file__dump_rgb_file_name="dataset_2.rgb",
+        dump_audio_file__dump_audio_file_name="dataset_2.wav",
+        dump_mp4=True,
+        dump_mp4_file__dump_mp4_filename="dataset_2.mp4",
     )
 
 
@@ -1056,21 +1088,50 @@ def test_dataset_3():
     run_dataset(
         base_rgb_video=base_rgb_video,
         ads=[ae_ad, hrc_ad],
-        # scan_video_for_shots__compare_threshold=0.75,
         naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance=290,
-        dump_rgb_and_wav=True,
         # dump_frames=False,
-        # dump_mp4=True,
-        # dump_mp4_file__dump_mp4_filename="dataset_3.mp4",
+        dump_rgb_and_wav=True,
+        dump_rgb_file__dump_rgb_file_name="dataset_3.rgb",
+        dump_audio_file__dump_audio_file_name="dataset_3.wav",
+        dump_mp4=True,
+        dump_mp4_file__dump_mp4_filename="dataset_3.mp4",
+    )
+
+
+def test_test_1():
+    base_rgb_video = RGBVideo(
+        video_file_name="test1/Videos/test1.rgb",
+        audio_file_name="test1/Videos/test1.wav",
+    )
+    starbucks_ad = RGBVideo(
+        video_file_name="test1/Ads/Starbucks_Ad_15s.rgb",
+        audio_file_name="test1/Ads/Starbucks_Ad_15s.wav",
+        ad_name="Starbucks",
+    )
+    subway_ad = RGBVideo(
+        video_file_name="test1/Ads/Subway_Ad_15s.rgb",
+        audio_file_name="test1/Ads/Subway_Ad_15s.wav",
+        ad_name="Subway",
+    )
+
+    run_dataset(
+        base_rgb_video=base_rgb_video,
+        ads=[starbucks_ad, subway_ad],
+        naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance=49,
+        dump_rgb_and_wav=True,
+        dump_rgb_file__dump_rgb_file_name="test1.rgb",
+        dump_audio_file__dump_audio_file_name="test1.wav",
+        dump_mp4=True,
+        dump_mp4_file__dump_mp4_filename="test1.mp4",
     )
 
 
 def main():
     # folder_structure_message()
-    # exit(0)
     # test_dataset_1()
     # test_dataset_2()
-    test_dataset_3()
+    # test_dataset_3()
+    test_test_1()
 
 
 if __name__ == "__main__":
