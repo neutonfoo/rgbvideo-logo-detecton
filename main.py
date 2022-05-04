@@ -83,40 +83,6 @@ class Shot:
     def compute_average_absolute_amplitude(self):
         self.average_absolute_amplitude = np.mean(np.abs(self.audio_buffer))
 
-    def normalize_audio_buffer_to_length(self, normalization_length: int):
-        side_buffers = 0
-
-        if len(self.audio_buffer) > normalization_length:
-            side_buffers = int((len(self.audio_buffer) - normalization_length) / 2)
-
-        self.normalized_audio_buffer = self.audio_buffer[
-            side_buffers : side_buffers + normalization_length
-        ]
-
-        self.normalized_audio_buffer -= np.mean(self.normalized_audio_buffer)
-        # print(self.normalized_audio_buffer)
-
-        ## Normalize the values to be between [0,1]
-        # This gets rid of negative values
-
-        # Got overflow errors, need to convert to int32
-
-        # # Normalize audio data
-        # self.normalized_audio_buffer = (self.normalized_audio_buffer - min_amplitude) / (
-        #     max_amplitude - min_amplitude
-        # )
-
-        # self.normalized_audio_buffer /=
-
-        # for x in self.normalized_audio_buffer:
-        #     print(x)
-
-    def __repr__(self):
-        return (
-            f"V: {self.start_frame_index} -> {self.start_frame_index + len(self.frames_buffer) - 1}\n"
-            f"A: {self.start_audio_index} -> {self.start_audio_index + len(self.audio_buffer) - 1})"
-        )
-
 
 class RGBVideo:
     def __init__(
@@ -237,18 +203,6 @@ class RGBVideo:
             self.ads_to_inject[ad_to_inject.ad_name] = ad_to_inject
 
         print(f"-- Ads indexed to base video: {', '.join(self.ads_to_inject.keys())}\n")
-
-    def dump_frames(self, output_folder="temp") -> None:
-        print(f"-- Dumping frames into '{output_folder}' folder")
-
-        for frame_index, frame_buffer in enumerate(self.frames_buffer):
-            im = Image.fromarray(frame_buffer)
-            im.save(f"{output_folder}/{frame_index}.png")
-
-            if frame_index % 100 == 0:
-                print(f"At frame {frame_index} of {self.frames_buffer.shape[0]}")
-
-        print("Frame dump completed")
 
     def scan_video_for_shots(
         self,
@@ -401,13 +355,11 @@ class RGBVideo:
 
         self.detected_logos_in_shots = detected_logos_in_shots
 
-        print("- Detection results")
+        print("- Logo detection results")
         for shot_index, detected_logos_in_shot in enumerate(
             self.detected_logos_in_shots
         ):
-            print(
-                f"Detected logos in shot {shot_index}: {', '.join(detected_logos_in_shot)}"
-            )
+            print(f"Shot {shot_index}: {', '.join(detected_logos_in_shot)}")
 
     def merge_shots_using_audio_hueristic(
         self,
@@ -460,7 +412,7 @@ class RGBVideo:
                 self.merge_shots(shot_index, shot_index + 1)
             else:
                 print(
-                    f"Shots {shot_index} and {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping. {abs(next_shot.average_absolute_amplitude - shot.average_absolute_amplitude)}"
+                    f"Shots {shot_index} and {shot_index+1} exceed advertisement absolute amplitude delta tolerance. Skipping. Delta = {abs(next_shot.average_absolute_amplitude - shot.average_absolute_amplitude)}"
                 )
 
     # Concatenates shot 2 to shot 1
@@ -646,12 +598,13 @@ class RGBVideo:
 
             if len(shot.frames_buffer) <= shot_length_tolerance_in_frames:
                 print(
-                    f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) classified as an ad. Length of clip falls under minimum threshold = {len(shot.frames_buffer)} frames."
+                    f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) classified as an ad. Length of clip falls under minimum threshold. Length = {len(shot.frames_buffer)} frames."
                 )
 
                 self.mark_ad(shot_index)
 
                 if was_prev_shot_an_ad:
+                    print(f"Merging shots {shot_index} and {shot_index + 1}")
                     self.merge_shots(shot_index, shot_index + 1)
 
                 was_prev_shot_an_ad = True
@@ -682,7 +635,7 @@ class RGBVideo:
                     was_prev_shot_an_ad = False
             else:
                 print(
-                    f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) exceeds advertisement length tolerance = {len(shot.frames_buffer)} frames."
+                    f"Shot {shot_index} (frames {shot.start_frame_index} to {shot.start_frame_index + len(shot.frames_buffer) - 1}) exceeds advertisement length tolerance. Length = {len(shot.frames_buffer)} frames."
                 )
 
                 was_prev_shot_an_ad = False
@@ -697,7 +650,6 @@ class RGBVideo:
         self.shots[shot_index].is_ad = True
 
     def replace_ads(self):
-
         flattened_and_pruned_detected_logos_in_shots: List[str] = []
 
         for shot_index, detected_logos_in_shot in enumerate(
@@ -739,7 +691,7 @@ class RGBVideo:
                     break
 
     def replace_ads_2(self):
-        print("-- Replacing ads")
+        print("-- Replacing ads with ads of detected logos")
 
         print("- Pruning detected logos")
 
@@ -770,23 +722,32 @@ class RGBVideo:
         for shot_index, detected_logos_in_shot in enumerate(
             pruned_detected_logos_in_shots
         ):
-            print(f"Shot {shot_index}: {', '.join(detected_logos_in_shot)}")
+            print(
+                f"Shot {shot_index}: {', '.join(detected_logos_in_shot) if len(detected_logos_in_shot) > 0 else '(None)'}"
+            )
 
-        print("- Replacing ads")
-
-        number_of_removed_unreplaced_ads = 0
+        print("- Injecting ads")
 
         flattened_ads_to_inject = []
 
-        for shot_index, shot in enumerate(self.shots):
+        shot_index = 0
+
+        while shot_index < len(self.shots) + len(self.ads_to_inject.keys()):
+
+            shot = self.shots[shot_index]
 
             # Concatenate the logos that were detected in the current shot
             flattened_ads_to_inject += pruned_detected_logos_in_shots[shot_index]
 
             if shot.is_ad:
-                print(f"- Shot {shot_index} is an ad. Removing.")
 
-                # is_ad_replaced = False
+                # If two logos are seen before an ad, they are inserted in order
+                # Even though the array is iterated from the back, they are appended to the initial ad index only
+                # Meaning the first injected ad will be pushed to the right by the second injected ad
+
+                print(f"- Shot {shot_index} is an ad. Preparing for removal.")
+
+                number_of_injected_ads_in_shot = 0
 
                 for ad_to_inject_index in range(
                     len(flattened_ads_to_inject) - 1, -1, -1
@@ -795,14 +756,12 @@ class RGBVideo:
                     ad_to_inject_name = flattened_ads_to_inject[ad_to_inject_index]
 
                     print(
-                        f"{ad_to_inject_name} detected in a previous shot. Inserting ad after shot {shot_index}"
+                        f"{ad_to_inject_name} detected in a previous shot. Injecting ad after shot {shot_index}"
                     )
                     self.insert_rgb_video_after_shot_index(
                         self.ads_to_inject[ad_to_inject_name],
                         shot_index,
                     )
-
-                    # is_ad_replaced = True
 
                     # Removed ad from index
                     del self.ads_to_inject[ad_to_inject_name]
@@ -810,12 +769,15 @@ class RGBVideo:
                     # Remove ad from list
                     flattened_ads_to_inject.pop()
 
-                    # break
+                    number_of_injected_ads_in_shot += 1
+
+                print(f"- Shot {shot_index} removed.")
 
                 self.remove_shot(shot_index)
 
-                # if not is_ad_replaced:
-                #     number_of_removed_unreplaced_ads += 1
+                shot_index += number_of_injected_ads_in_shot - 1
+
+            shot_index += 1
 
     def insert_rgb_video_after_shot_index(
         self, rgb_video: RGBVideo, insert_shot_index: int
@@ -859,13 +821,27 @@ class RGBVideo:
 
     def __rebuild_frames_buffer(self):
         print("-- Rebuilding video frames buffer")
+        del self.frames_buffer
         self.frames_buffer = np.concatenate([shot.frames_buffer for shot in self.shots])
         print("Frames buffer rebuilt")
 
     def __rebuild_audio_buffer(self):
         print("-- Rebuilding video audio buffer")
+        del self.audio_buffer
         self.audio_buffer = np.concatenate([shot.audio_buffer for shot in self.shots])
         print("Audio buffer rebuilt")
+
+    def dump_frames(self, output_folder="temp") -> None:
+        print(f"-- Dumping frames into '{output_folder}' folder")
+
+        for frame_index, frame_buffer in enumerate(self.frames_buffer):
+            im = Image.fromarray(frame_buffer)
+            im.save(f"{output_folder}/{frame_index}.png")
+
+            if frame_index % 100 == 0:
+                print(f"At frame {frame_index} of {self.frames_buffer.shape[0]}")
+
+        print("Frame dump completed")
 
     def dump_rgb_file(self, dump_rgb_file_name: str):
 
@@ -917,21 +893,6 @@ class RGBVideo:
         # Subtract 1 because get to the sample before the first sample of the next frame
 
         return (start_t, end_t)
-
-
-def folder_structure_message():
-    print("-- Add the following .env variables")
-    print('GOOGLE_VISION_CREDS_JSON="creds/google_vision_creds.json"')
-    print()
-    print("-- Please create the following folder structure")
-    print("./creds/google_vision_creds.json")
-    print("./dataset-001/dataset1/{Ads,Brand Images,Videos}")
-    print("./dataset-002/dataset2/{Ads,Brand Images,Videos}")
-    print("./dataset-003/dataset3/{Ads,Brand Images,Videos}")
-    print("./video_frames/temp")
-    print("./video_frames/video_frames_1")
-    print("./video_frames/video_frames_2")
-    print("./video_frames/video_frames_3")
 
 
 def run_dataset(
@@ -1127,7 +1088,6 @@ def test_test_1():
 
 
 def main():
-    # folder_structure_message()
     # test_dataset_1()
     # test_dataset_2()
     # test_dataset_3()
