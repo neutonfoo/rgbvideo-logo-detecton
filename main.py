@@ -996,8 +996,8 @@ def test_dataset_1():
         dump_rgb_and_wav=True,
         dump_rgb_file__dump_rgb_file_name="dataset_1.rgb",
         dump_audio_file__dump_audio_file_name="dataset_1.wav",
-        dump_mp4=True,
-        dump_mp4_file__dump_mp4_filename="dataset_1.mp4",
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="dataset_1.mp4",
     )
 
 
@@ -1022,11 +1022,12 @@ def test_dataset_2():
         ads=[mcdonalds_ad, nfl_ad],
         scan_video_for_shots__compare_threshold=0.75,
         # dump_frames=False,
+        # dump_rgb_and_wav=False,
         dump_rgb_and_wav=True,
         dump_rgb_file__dump_rgb_file_name="dataset_2.rgb",
         dump_audio_file__dump_audio_file_name="dataset_2.wav",
-        dump_mp4=True,
-        dump_mp4_file__dump_mp4_filename="dataset_2.mp4",
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="dataset_2.mp4",
     )
 
 
@@ -1051,11 +1052,12 @@ def test_dataset_3():
         ads=[ae_ad, hrc_ad],
         naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance=290,
         # dump_frames=False,
-        dump_rgb_and_wav=True,
+        dump_rgb_and_wav=False,
+        # dump_rgb_and_wav=True,
         dump_rgb_file__dump_rgb_file_name="dataset_3.rgb",
         dump_audio_file__dump_audio_file_name="dataset_3.wav",
-        dump_mp4=True,
-        dump_mp4_file__dump_mp4_filename="dataset_3.mp4",
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="dataset_3.mp4",
     )
 
 
@@ -1079,11 +1081,12 @@ def test_test_1():
         base_rgb_video=base_rgb_video,
         ads=[starbucks_ad, subway_ad],
         naive_ad_audio_classifier_and_merger__advertisement_absolute_amplitude_delta_tolerance=49,
+        # dump_rgb_and_wav=False,
         dump_rgb_and_wav=True,
-        dump_rgb_file__dump_rgb_file_name="test1.rgb",
-        dump_audio_file__dump_audio_file_name="test1.wav",
-        dump_mp4=True,
-        dump_mp4_file__dump_mp4_filename="test1.mp4",
+        dump_rgb_file__dump_rgb_file_name="Video-Foo-Kur-Yang.rgb",
+        dump_audio_file__dump_audio_file_name="Video-Foo-Kur-Yang.wav",
+        # dump_mp4=True,
+        # dump_mp4_file__dump_mp4_filename="test1.mp4",
     )
 
 
